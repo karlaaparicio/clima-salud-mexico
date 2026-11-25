@@ -242,32 +242,50 @@ Sustituir los valores de ejemplo por las credenciales correspondientes.
 
 ### 3. Ejecutar el sistema
 
-Iniciar los servicios de MySQL y MongoDB y ejecutar los siguientes comandos en orden:
+## Instalación y ejecución
 
-**Verificar conexiones:**
+### . Requisitos previos
+- Python 3 instalado.
+- MySQL 8.
+- MongoDB 8.
 
-```bash
-python probar_conexiones.py
-```
+### . Instalar dependencias
 
-**Ejecutar migración:**
-
-```bash
-python Migracion_clima_salud.py
-```
-
-**Iniciar dashboard:**
+Desde la terminal, dentro de la carpeta del proyecto, ejecutar:
 
 ```bash
-streamlit run dashboard.py
+python3 -m pip install -r requirements.txt
 ```
 
-Abrir en el navegador:
+Este comando instala las librerías necesarias para ejecutar el proyecto.
 
-```text
+### . Configurar las conexiones
+
+Crear un archivo `.env` con las credenciales de MySQL y MongoDB. Este archivo es privado y no debe subirse al repositorio.
+
+### . Probar las conexiones
+
+```bash
+python3 probar_conexiones.py
+```
+
+### . Ejecutar la migración
+
+```bash
+python3 Migracion_clima_salud.py
+```
+
+### . Iniciar el dashboard
+
+```bash
+python3 -m streamlit run dashboard.py
+```
+
+Streamlit abrirá la interfaz en el navegador, normalmente en:
+
 http://localhost:8501
-```
 
+**Nota:** Para ejecutar correctamente el sistema, es necesario tener las bases de datos configuradas y disponibles.
 ---
 
 ## ARCHIVOS PRINCIPALES
