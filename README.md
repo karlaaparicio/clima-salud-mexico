@@ -1,166 +1,352 @@
-# clima-salud-mexico
+# CLIMA Y SALUD MÉXICO
+### Sistema de integración, migración y análisis de datos climatológicos y epidemiológicos
 
-Proyecto ETL y dashboards sobre la relación entre el clima (temperatura, humedad y lluvia) y las enfermedades en México.
-
-> **Estado:** en desarrollo · Proyecto final de Base de Datos · UABC Campus Otay
-
----
-
-## Tabla de contenido
-
-1. [Descripción](#descripción)
-2. [Problemática y objetivos](#problemática-y-objetivos)
-3. [Fuentes de datos](#fuentes-de-datos)
-4. [Arquitectura del proyecto](#arquitectura-del-proyecto)
-5. [Modelo de datos](#modelo-de-datos)
-6. [Proceso ETL](#proceso-etl)
-7. [Funcionalidades de la base de datos](#funcionalidades-de-la-base-de-datos)
-8. [Migración a MongoDB](#migración-a-mongodb)
-9. [Dashboards](#dashboards)
-10. [Estructura del repositorio](#estructura-del-repositorio)
-11. [Requisitos e instalación](#requisitos-e-instalación)
-12. [Uso](#uso)
-13. [Equipo](#equipo)
+**Proyecto Final de Base de Datos**  
+Universidad Autónoma de Baja California (UABC)  
+Campus Otay · 2026
 
 ---
 
-## Descripción
+## 1. INFORMACIÓN DEL PROYECTO
 
-Este proyecto integra datos climatológicos y datos de salud de México para analizar cómo variables como la **temperatura**, la **humedad** y la **lluvia** se relacionan con la incidencia de distintas enfermedades. El flujo completo cubre:
+| Dato | Descripción |
+|---|---|
+| Proyecto | Clima y Salud México |
+| Institución | Universidad Autónoma de Baja California |
+| Campus | Otay |
+| Asignatura | Base de Datos |
+| Periodo | 2026 |
+| Tipo | Integración de bases de datos relacionales y NoSQL |
 
-- **Extracción** de datos desde fuentes abiertas.
-- **Transformación y limpieza** de los datos.
-- **Carga** en una base de datos relacional.
-- **Migración** de tablas seleccionadas a MongoDB.
-- **Visualización** de resultados en dashboards.
+**Integrantes:**
+- Zoe Valentina Crespo Dorantes
+- Ingrid Engracia Montesinos Jiménez
+- Karla Stephanie Aparicio Garduño
 
-## Problemática y objetivos
+---
 
-**Problemática:** _(describir aquí la problemática de empresa o negocio local que atiende el proyecto)_
+## 2. DESCRIPCIÓN GENERAL
 
-**Objetivo general:** Construir una base de datos y un pipeline ETL que permitan analizar la relación entre clima y enfermedades en México.
+Clima y Salud México es un sistema diseñado para integrar, almacenar, migrar y analizar información climatológica y epidemiológica mediante dos modelos de bases de datos: relacional y documental.
 
-**Objetivos específicos:**
+La solución utiliza MySQL como base de datos de origen, MongoDB como destino de la migración y Python como herramienta para ejecutar los procesos de extracción, transformación y carga (ETL).
 
-- Diseñar una base de datos relacional con al menos 7 entidades.
-- Automatizar la extracción, limpieza y carga de datos.
-- Implementar procedimientos almacenados, triggers de auditoría y roles de usuario.
-- Migrar tablas seleccionadas a MongoDB mediante un script migrador con interfaz gráfica.
-- Presentar los hallazgos en dashboards interactivos.
+El sistema incorpora un dashboard desarrollado con Streamlit para consultar indicadores, analizar registros y comparar los resultados almacenados en ambos motores de bases de datos.
 
-## Fuentes de datos
+**Flujo principal:**
 
-| Fuente | Tipo de dato | Formato | Periodo |
-|--------|--------------|---------|---------|
-| _(por definir)_ | Clima (temperatura, humedad, lluvia) | _CSV / API_ | _—_ |
-| _(por definir)_ | Salud (enfermedades) | _CSV / API_ | _—_ |
-
-## Arquitectura del proyecto
-
-```
-Fuentes de datos  ->  Extracción  ->  Transformación  ->  Carga (SQL)  ->  Migración (MongoDB)
-                                                              |
-                                                              v
-                                                         Dashboards
-```
-
-_(Se puede reemplazar por un diagrama de imagen en `docs/`.)_
-
-## Modelo de datos
-
-Base de datos relacional con **7 o más entidades**.
-
-| Entidad | Descripción |
-|---------|-------------|
-| _(por definir)_ | _—_ |
-
-_Agregar aquí el diagrama entidad-relación (`docs/modelo_er.png`)._
-
-## Proceso ETL
-
-1. **Extracción:** descarga/lectura de los datos desde las fuentes.
-2. **Transformación:** limpieza de nulos y duplicados, estandarización de fechas y estados/municipios, y unión de datasets de clima y salud.
-3. **Carga:** inserción de los datos limpios en la base de datos.
-
-## Funcionalidades de la base de datos
-
-- **Procedimientos almacenados (CRUD):** consulta y operaciones de alta, baja y modificación.
-- **Triggers y tabla de auditoría:** registro de cambios (entidad, fecha, acción, usuario).
-- **Roles de usuario:**
-
-| Rol | Permisos |
-|-----|----------|
-| Administrador | _(por definir)_ |
-| Usuario | _(por definir)_ |
-| Analista | _(por definir)_ |
-
-- **Reportes:**
-  - Reporte 1 (lista): _(por definir)_
-  - Reporte 2 (lista): _(por definir)_
-  - Reporte 3: generado según los parámetros que se soliciten.
-
-## Migración a MongoDB
-
-Script migrador que clona tablas seleccionadas de SQL a MongoDB, con:
-
-- Lectura de las tablas origen.
-- Migración de los datos y validación de la estructura NoSQL.
-- Manejo de errores.
-- Interfaz gráfica.
-
-**Colecciones resultantes:** _(por definir)_
-
-## Dashboards
-
-_(Agregar capturas en `docs/` y describir los indicadores principales: por ejemplo, enfermedades vs. temperatura, humedad y precipitación por estado y periodo.)_
-
-## Estructura del repositorio
-
-```
-clima-salud-mexico/
-├── data/            # datos crudos y limpios
-├── etl/             # scripts de extracción, transformación y carga
-├── sql/             # esquema, procedimientos, triggers, roles y reportes
-├── migracion/       # script migrador a MongoDB e interfaz gráfica
-├── dashboards/      # archivos de dashboards
-├── docs/            # diagramas y capturas
-└── README.md
+```text
+MYSQL
+Base de datos relacional
+        |
+        v
+PYTHON
+Extracción, transformación y carga (ETL)
+        |
+        v
+MONGODB
+Base de datos documental
+        |
+        v
+STREAMLIT
+Consultas, indicadores y visualización
 ```
 
-_(Ajustar a la estructura real del repositorio.)_
+---
 
-## Requisitos e instalación
+## 3. OBJETIVO
 
-**Requisitos:**
+Desarrollar un sistema de integración de datos climatológicos y epidemiológicos que permita administrar información en MySQL y MongoDB, implementar procesos de migración mediante Python y visualizar los resultados a través de una interfaz interactiva.
 
-- Python 3.x
-- _Motor de base de datos SQL (por definir)_
-- MongoDB
-- _Librerías: pandas, ... (por definir)_
+### Objetivos específicos
 
-**Instalación:**
+- Diseñar una estructura relacional en MySQL.
+- Implementar consultas SQL y procedimientos almacenados.
+- Construir una estructura documental en MongoDB.
+- Desarrollar un proceso ETL para transferir información.
+- Validar la integridad y consistencia de los datos migrados.
+- Comparar los resultados entre ambas bases de datos.
+- Generar indicadores y reportes mediante Streamlit.
+
+---
+
+## 4. TECNOLOGÍAS UTILIZADAS
+
+| Tecnología | Función dentro del sistema |
+|---|---|
+| Python 3 | Procesamiento y migración de datos |
+| MySQL 8 | Almacenamiento relacional |
+| MongoDB 8 | Almacenamiento documental |
+| PyMySQL | Conexión con MySQL |
+| PyMongo | Conexión con MongoDB |
+| Pandas | Manipulación y transformación de datos |
+| Streamlit | Interfaz de consulta |
+| Plotly | Gráficas y visualizaciones |
+| Python-dotenv | Administración de variables de entorno |
+| PyCharm | Entorno de desarrollo |
+
+---
+
+## 5. ESTRUCTURA DE LAS BASES DE DATOS
+
+### 5.1 MySQL – Modelo relacional
+
+**Base de datos:** `clima_salud_mx`
+
+La estructura está integrada por nueve tablas:
+
+| Tabla | Función |
+|---|---|
+| `estados` | Catálogo de estados de México |
+| `municipios` | Información geográfica municipal |
+| `estaciones_meteorologicas` | Información de estaciones climáticas |
+| `registros_clima` | Registros de variables climatológicas |
+| `unidades_salud` | Catálogo de unidades de atención médica |
+| `enfermedades` | Catálogo de enfermedades |
+| `casos_salud` | Registros epidemiológicos y defunciones |
+| `resumen_mensual` | Resúmenes estadísticos por periodo |
+| `auditoria` | Registro de operaciones y seguimiento |
+
+### 5.2 MongoDB – Modelo documental
+
+**Base de datos:** `clima_salud_mx`
+
+Colecciones:
+
+- `estados`
+- `municipios`
+- `enfermedades`
+- `registros_clima`
+- `casos_salud`
+- `resumen_mensual`
+- `auditoria`
+
+La estructura documental permite almacenar información relacionada mediante documentos y subdocumentos, facilitando la consulta de datos geográficos, climatológicos y epidemiológicos.
+
+---
+
+## 6. PROCESO ETL Y MIGRACIÓN
+
+**Archivo principal:** `Migracion_clima_salud.py`
+
+El proceso ETL permite transferir información desde MySQL hacia MongoDB, transformando los registros relacionales en documentos.
+
+### Etapas del proceso
+
+| Etapa | Descripción |
+|---|---|
+| Extracción | Lectura de registros desde MySQL |
+| Transformación | Organización y relación de información |
+| Agrupación | Consolidación de registros por periodo |
+| Conversión | Transformación de registros en documentos |
+| Carga | Inserción o actualización en MongoDB |
+| Validación | Comparación de resultados entre ambas bases |
+
+### Flujo de migración
+
+```text
+MYSQL
+  |
+  v
+EXTRACCIÓN DE REGISTROS
+  |
+  v
+TRANSFORMACIÓN CON PYTHON
+  |
+  v
+ORGANIZACIÓN DOCUMENTAL
+  |
+  v
+CARGA EN MONGODB
+  |
+  v
+VALIDACIÓN DE INFORMACIÓN
+```
+
+---
+
+## 7. CONSULTAS Y REPORTES SQL
+
+El sistema contempla consultas para obtener información epidemiológica y estadística.
+
+### Consultas implementadas
+
+- Casos y defunciones por enfermedad.
+- Distribución de casos por municipio.
+- Comportamiento mensual de los registros.
+- Casos por grupo de edad.
+- Totales generales de casos y defunciones.
+
+### Procedimiento almacenado
+
+Se implementó el procedimiento `consultar_enfermedad`, que permite consultar información asociada a una enfermedad específica.
+
+Ejemplo:
+
+```sql
+CALL consultar_enfermedad('Dengue');
+```
+
+---
+
+## 8. DASHBOARD Y VISUALIZACIÓN
+
+**Archivo principal:** `dashboard.py`
+
+La interfaz desarrollada con Streamlit permite consultar y visualizar los datos del proyecto.
+
+| Módulo | Funcionalidad |
+|---|---|
+| Inicio | Indicadores generales |
+| Enfermedades | Consulta de casos por enfermedad |
+| Municipios | Distribución geográfica de casos |
+| Análisis mensual | Comportamiento de registros por periodo |
+| Grupos de edad | Distribución epidemiológica por edad |
+| Información climática | Consulta de variables climatológicas |
+| Bases de datos | Comparación de resultados entre MySQL y MongoDB |
+
+Plotly se utiliza para representar gráficamente los indicadores y facilitar la interpretación de los resultados.
+
+---
+
+## 9. RESULTADOS Y VALIDACIÓN
+
+La migración se evaluó mediante la comparación de los registros originales de MySQL y los documentos almacenados en MongoDB.
+
+### Resultados obtenidos
+
+| Indicador | Resultado |
+|---|---:|
+| Registros consultados en MySQL | 4,238 |
+| Documentos preparados | 1,118 |
+| Documentos almacenados en MongoDB | 1,118 |
+| Total de casos en MySQL | 29,708 |
+| Total de casos en MongoDB | 29,708 |
+| Defunciones | 3 |
+| Diferencia de casos | 0 |
+
+### Criterios de validación
+
+- Coincidencia del total de casos entre ambas bases de datos.
+- Correspondencia entre documentos preparados y almacenados.
+- Verificación de campos obligatorios.
+- Detección de identificadores duplicados.
+- Validación de que las defunciones no superen el número de casos.
+
+**Resultado:** se obtuvo una diferencia de cero casos entre MySQL y MongoDB, conservando el total de 29,708 casos después de la migración.
+
+---
+
+## 10. INSTALACIÓN Y CONFIGURACIÓN
+
+### Requisitos
+
+- Python 3.
+- MySQL Server 8.
+- MongoDB Server 8.
+- PyCharm o terminal.
+- Archivos y estructuras de bases de datos del proyecto.
+
+### 10.1 Instalar dependencias
 
 ```bash
-git clone <url-del-repositorio>
-cd clima-salud-mexico
-pip install -r requirements.txt
+pip install pymysql pymongo streamlit pandas plotly python-dotenv
 ```
 
-## Uso
+### 10.2 Configurar variables de entorno
 
-1. Crear la base de datos ejecutando los scripts de `sql/`.
-2. Ejecutar el proceso ETL desde `etl/`.
-3. Ejecutar el migrador de `migracion/`.
-4. Abrir los dashboards.
+Crear un archivo `.env` en la carpeta principal:
 
-## Equipo
+```ini
+MYSQL_HOST=localhost
+MYSQL_USER=tu_usuario
+MYSQL_PASSWORD=tu_contraseña
+MYSQL_DATABASE=clima_salud_mx
 
-| Nombre | Rol |
-|--------|-----|
-| Zoe Valentina Crespo Dorantes | _(por definir)_ 
-| Ingrid Engracia Montesinos Jimenez | _(por definir)_ |
-| Karla Stephanie Aparicio Garduño | _(por definir)_ |
+MONGO_URI=mongodb://localhost:27017/
+MONGO_DATABASE=clima_salud_mx
+```
+
+Sustituir los valores de ejemplo por las credenciales correspondientes.
+
+**Importante:** no publicar el archivo `.env` en repositorios públicos.
 
 ---
 
-Proyecto académico · UABC Campus Otay · 2026
+## 11. EJECUCIÓN DEL SISTEMA
+
+Para ejecutar el proyecto, seguir este orden:
+
+**1. Iniciar los servicios**
+
+Iniciar MySQL Server y MongoDB Server.
+
+**2. Verificar las conexiones**
+
+```bash
+python probar_conexiones.py
+```
+
+**3. Ejecutar el proceso de migración**
+
+```bash
+python Migracion_clima_salud.py
+```
+
+**4. Iniciar el dashboard**
+
+```bash
+streamlit run dashboard.py
+```
+
+**5. Acceder a la interfaz**
+
+Abrir en el navegador:
+
+```text
+http://localhost:8501
+```
+
+**6. Verificar resultados**
+
+Consultar los módulos del dashboard y comprobar que los totales de casos coincidan entre MySQL y MongoDB.
+
+---
+
+## 12. ARCHIVOS PRINCIPALES
+
+| Archivo | Descripción |
+|---|---|
+| `dashboard.py` | Interfaz de visualización y consulta |
+| `Migracion_clima_salud.py` | Proceso ETL y migración |
+| `probar_conexiones.py` | Verificación de conexiones |
+| `.env` | Variables de configuración local |
+| `.gitignore` | Exclusión de archivos privados |
+| `README.md` | Documentación técnica |
+
+---
+
+## 13. CONCLUSIÓN
+
+El proyecto Clima y Salud México integra dos modelos de bases de datos mediante un proceso ETL desarrollado en Python. Su implementación permite administrar información climatológica y epidemiológica en MySQL y MongoDB, además de facilitar su consulta y visualización mediante Streamlit.
+
+La comparación de resultados permitió comprobar la conservación de los 29,708 casos registrados, obteniendo una diferencia de cero entre ambas bases de datos.
+
+El desarrollo demuestra la aplicación de conceptos de modelado relacional, administración documental, consultas SQL, procedimientos almacenados, migración de información y validación de datos en una solución integrada.
+
+---
+
+## 14. REFERENCIAS TÉCNICAS
+
+- MySQL. (s. f.). *MySQL 8.0 Reference Manual*. https://dev.mysql.com/doc/refman/8.0/en/
+- MongoDB. (s. f.). *MongoDB Documentation*. https://www.mongodb.com/docs/
+- Python Software Foundation. (s. f.). *Python Documentation*. https://docs.python.org/3/
+- Streamlit. (s. f.). *Streamlit Documentation*. https://docs.streamlit.io/
+- Pandas. (s. f.). *Pandas Documentation*. https://pandas.pydata.org/docs/
+- Plotly. (s. f.). *Plotly Python Documentation*. https://plotly.com/python/
+
+---
+
+**CLIMA Y SALUD MÉXICO**  
+Universidad Autónoma de Baja California · Campus Otay · 2026  
+Proyecto Final de Base de Datos
