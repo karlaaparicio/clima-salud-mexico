@@ -238,8 +238,6 @@ MONGO_DATABASE=clima_salud_mx
 
 Sustituir los valores de ejemplo por las credenciales correspondientes.
 
-**Importante:** No subir el archivo `.env` a GitHub, ya que contiene información privada.
-
 ### 3. Ejecutar el sistema
 
 ## Instalación y ejecución
