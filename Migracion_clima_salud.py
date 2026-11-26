@@ -6,7 +6,33 @@ from datetime import datetime, timezone
 
 import pymysql
 from pymongo import MongoClient, ReplaceOne
+from pymongo.errors import BulkWriteError
 from dotenv import load_dotenv
+
+
+def escribir_en_mongo(coleccion, operaciones):
+    """bulk_write con un mensaje de error corto y claro si MongoDB rechaza documentos."""
+    try:
+        return coleccion.bulk_write(operaciones, ordered=False)
+    except BulkWriteError as e:
+        errores = e.details.get("writeErrors", [])
+        primero = errores[0] if errores else {}
+        esquema = ""
+        try:
+            info = coleccion.database.command(
+                "listCollections", filter={"name": coleccion.name}
+            )["cursor"]["firstBatch"]
+            validador = info[0].get("options", {}).get("validator") if info else None
+            if validador:
+                esquema = f"\nReglas de validación de '{coleccion.name}': {validador}"
+        except Exception:
+            pass
+        raise ValueError(
+            f"MongoDB rechazó {len(errores)} documento(s) de '{coleccion.name}'.\n"
+            f"Primer error: {primero.get('errmsg')}\n"
+            f"Detalle: {str(primero.get('errInfo'))[:1500]}"
+            f"{esquema}"
+        ) from None
 
 # ==========================================
 # 1. CONEXIONES (credenciales en el archivo .env, igual que dashboard.py)
@@ -231,10 +257,7 @@ try:
     ]
 
     if operaciones:
-        resultado = coleccion.bulk_write(
-            operaciones,
-            ordered=False
-        )
+        resultado = escribir_en_mongo(coleccion, operaciones)
 
         print("Documentos insertados:", resultado.upserted_count)
         print("Documentos modificados:", resultado.modified_count)
@@ -283,7 +306,102 @@ try:
             or int(mysql_tot["defunciones"]) != mongo_tot["defunciones"]):
         raise ValueError("Los totales de MySQL y MongoDB no coinciden")
 
-    print("MIGRACIÓN FINALIZADA CORRECTAMENTE")
+    # ==========================================
+    # 8. MIGRAR REGISTROS CLIMÁTICOS
+    # Un documento por estación y día, con la estación, el municipio y el
+    # estado como subdocumentos (para consultarlos sin hacer joins).
+    # ==========================================
+
+    print("\n--- Registros climáticos ---")
+
+    with conexion_mysql.cursor() as cursor:
+        cursor.execute("""
+            SELECT
+                r.id_registro, r.fecha,
+                r.temp_max, r.temp_min, r.humedad_pct,
+                r.precipitacion_mm, r.indice_uv, r.ica,
+                ec.id_estacion, ec.nombre AS estacion,
+                ec.latitud, ec.longitud, ec.altitud_m,
+                m.id_municipio, m.nombre AS municipio,
+                e.clave AS estado_clave, e.nombre AS estado
+            FROM registros_clima r
+            INNER JOIN estaciones_meteorologicas ec
+                ON r.id_estacion = ec.id_estacion
+            INNER JOIN municipios m
+                ON ec.id_municipio = m.id_municipio
+            INNER JOIN estados e
+                ON m.id_estado = e.id_estado
+            ORDER BY r.fecha, ec.id_estacion
+        """)
+        registros_clima = cursor.fetchall()
+
+    print("Registros climáticos leídos de MySQL:", len(registros_clima))
+
+    documentos_clima = []
+
+    for r in registros_clima:
+        fecha = r["fecha"]
+        temp_max = float(r["temp_max"])
+        temp_min = float(r["temp_min"])
+
+        # MongoDB no guarda el tipo DECIMAL de MySQL: se convierte a número
+        # Estructura plana: exactamente los campos que exige el esquema de
+        # validación ($jsonSchema) de la colección registros_clima en MongoDB
+        documentos_clima.append({
+            "estacion_id": int(r["id_estacion"]),
+            "municipio_id": int(r["id_municipio"]),
+            "estado_clave": r["estado_clave"],
+            "fecha": datetime(fecha.year, fecha.month, fecha.day, tzinfo=timezone.utc),
+            "temp_max": temp_max,
+            "temp_min": temp_min,
+            "humedad_pct": int(r["humedad_pct"]),
+            "precipitacion_mm": float(r["precipitacion_mm"]),
+            "indice_uv": float(r["indice_uv"]),
+            "ica": int(r["ica"])
+        })
+
+    coleccion_clima = db["registros_clima"]
+
+    # Cada registro se identifica por su llave natural (estación + fecha),
+    # que es la que protege el índice único estacion_id_1_fecha_1 de MongoDB.
+    # Si el documento ya existe se actualiza conservando su _id; si no, se crea.
+    if documentos_clima:
+        resultado = escribir_en_mongo(
+            coleccion_clima,
+            [
+                ReplaceOne(
+                    {"estacion_id": d["estacion_id"], "fecha": d["fecha"]},
+                    d,
+                    upsert=True
+                )
+                for d in documentos_clima
+            ]
+        )
+        print("Documentos insertados:", resultado.upserted_count)
+        print("Documentos modificados:", resultado.modified_count)
+
+    # Eliminar los documentos de estación/fecha que ya no existen en MySQL
+    llaves_actuales = {
+        (d["estacion_id"], d["fecha"].replace(tzinfo=None)) for d in documentos_clima
+    }
+    ids_obsoletos = [
+        doc["_id"]
+        for doc in coleccion_clima.find({}, {"estacion_id": 1, "fecha": 1})
+        if (doc.get("estacion_id"),
+            doc["fecha"].replace(tzinfo=None) if isinstance(doc.get("fecha"), datetime) else doc.get("fecha")
+            ) not in llaves_actuales
+    ]
+    obsoletos = coleccion_clima.delete_many({"_id": {"$in": ids_obsoletos}})
+    print("Documentos obsoletos eliminados:", obsoletos.deleted_count)
+
+    total_clima_mongo = coleccion_clima.count_documents({})
+    print("Registros climáticos  MySQL:", len(registros_clima),
+          "| MongoDB:", total_clima_mongo)
+
+    if total_clima_mongo != len(registros_clima):
+        raise ValueError("Los registros climáticos de MySQL y MongoDB no coinciden")
+
+    print("\nMIGRACIÓN FINALIZADA CORRECTAMENTE")
     exito = True
 
 except Exception as error:

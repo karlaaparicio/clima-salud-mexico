@@ -196,8 +196,12 @@ Se consideran los siguientes criterios:
 | Casos en MongoDB | 37,231 |
 | Defunciones (MySQL y MongoDB) | 249 |
 | Diferencia de casos | 0 |
+| Registros climáticos en MySQL | 4,380 |
+| Documentos en `registros_clima` (MongoDB) | 4,380 |
 
-*Resultados con `climasalud.sql` recién cargado. La migración compara los totales de MySQL y MongoDB al terminar, y si no coinciden se detiene con error. También elimina de MongoDB los documentos que ya no existen en MySQL.*
+*Resultados con `climasalud.sql` recién cargado. La migración llena las colecciones `casos_salud` (un documento por unidad, enfermedad y mes) y `registros_clima` (un documento por estación y día, con los campos que exige el esquema de validación de la colección: `estacion_id`, `municipio_id`, `estado_clave`, `fecha`, `temp_max`, `temp_min`, `humedad_pct`, `precipitacion_mm`, `indice_uv` e `ica`). Al terminar compara los totales de MySQL y MongoDB, y si no coinciden se detiene con error. También elimina de MongoDB los documentos que ya no existen en MySQL, por lo que se puede ejecutar varias veces.*
+
+*El dashboard funciona con cualquier versión de Streamlit: desde la 1.49 usa `width="stretch"`, y en versiones anteriores usa `use_container_width`.*
 
 **Nota sobre los datos:** las tablas de MySQL se llenan con datos sintéticos de 2025, generados por `climasalud.sql` con patrones realistas de temperatura y lluvia por ciudad. Los datos reales descargados (Open-Meteo y datos abiertos de dengue 2023) se encuentran procesados en `data/processed/`.
 

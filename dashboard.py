@@ -1,5 +1,6 @@
 
 import os
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -17,6 +18,15 @@ st.set_page_config(
     page_title="Clima y Salud México",
     page_icon="🌎",
     layout="wide"
+)
+
+# Ancho completo para gráficas y tablas, compatible con cualquier versión de Streamlit:
+# desde la 1.49 se usa width="stretch" (use_container_width está obsoleto);
+# en versiones anteriores width="stretch" no existe, así que se usa use_container_width.
+_version_st = tuple(int(n) for n in re.findall(r"\d+", st.__version__)[:2])
+ANCHO_COMPLETO = (
+    {"width": "stretch"} if _version_st >= (1, 49)
+    else {"use_container_width": True}
 )
 
 # CONEXIONES
@@ -135,7 +145,7 @@ if seccion == "Inicio":
         title="Casos registrados por enfermedad"
     )
 
-    st.plotly_chart(figura, use_container_width=True)
+    st.plotly_chart(figura, **ANCHO_COMPLETO)
 
 
 # ENFERMEDADES
@@ -163,10 +173,10 @@ elif seccion == "Enfermedades":
             color="casos",
             title="Casos por enfermedad"
         ),
-        use_container_width=True
+        **ANCHO_COMPLETO
     )
 
-    st.dataframe(datos, use_container_width=True)
+    st.dataframe(datos, **ANCHO_COMPLETO)
 
 
 # MUNICIPIOS
@@ -196,10 +206,10 @@ elif seccion == "Municipios":
             orientation="h",
             title="Casos registrados por municipio"
         ),
-        use_container_width=True
+        **ANCHO_COMPLETO
     )
 
-    st.dataframe(datos, use_container_width=True)
+    st.dataframe(datos, **ANCHO_COMPLETO)
 
 
 # ANÁLISIS MENSUAL
@@ -235,10 +245,10 @@ elif seccion == "Análisis mensual":
             markers=True,
             title="Evolución mensual de casos"
         ),
-        use_container_width=True
+        **ANCHO_COMPLETO
     )
 
-    st.dataframe(datos, use_container_width=True)
+    st.dataframe(datos, **ANCHO_COMPLETO)
 
 
 # GRUPOS DE EDAD
@@ -263,10 +273,10 @@ elif seccion == "Grupos de edad":
             values="casos",
             title="Distribución de casos por edad"
         ),
-        use_container_width=True
+        **ANCHO_COMPLETO
     )
 
-    st.dataframe(datos, use_container_width=True)
+    st.dataframe(datos, **ANCHO_COMPLETO)
 
 
 # INFORMACIÓN CLIMÁTICA
@@ -287,7 +297,7 @@ elif seccion == "Información climática":
     if documentos:
         st.dataframe(
             pd.json_normalize(documentos),
-            use_container_width=True
+            **ANCHO_COMPLETO
         )
     else:
         st.info("No hay registros climáticos disponibles.")
@@ -314,7 +324,7 @@ elif seccion == "Bases de datos":
 
         st.dataframe(
             pd.DataFrame({"Tablas MySQL": nombres_tablas}),
-            use_container_width=True
+            **ANCHO_COMPLETO
         )
     finally:
         conexion.close()
@@ -338,7 +348,7 @@ elif seccion == "Bases de datos":
 
     st.dataframe(
         pd.DataFrame(conteos),
-        use_container_width=True
+        **ANCHO_COMPLETO
     )
 
     st.divider()
