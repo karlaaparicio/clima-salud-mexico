@@ -2,9 +2,19 @@
 -- =====================================================================
 -- PROYECTO: Clima-Salud-México (Base de Datos, UABC)
 -- Elaborado por: Zoe Crespo, Ingrid Montesinos, Karla Aparicio. 
+-- ---------------------------------------------------------------------
+-- Ejecutar COMPLETO conectado como root (o un usuario con todos los
+-- privilegios). Compatible con MySQL 8.0+ y MariaDB 10.5+ (XAMPP).
+-- Se puede ejecutar varias veces: borra y vuelve a crear todo.
 -- =====================================================================
+SET NAMES utf8mb4;          -- acentos correctos sin importar el cliente
+SET SQL_SAFE_UPDATES = 0;   -- el modo seguro de Workbench no bloquea la carga
+SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';  -- modo estricto: los procedimientos se guardan con él
 DROP DATABASE IF EXISTS clima_salud_mx;
-CREATE DATABASE clima_salud_mx CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+-- La base usa la misma collation que la conexión (MySQL 8: utf8mb4_0900_ai_ci;
+-- MariaDB: su default). Así nunca hay errores de "Illegal mix of collations".
+SET @sql_bd = CONCAT('CREATE DATABASE clima_salud_mx CHARACTER SET utf8mb4 COLLATE ', @@collation_connection);
+PREPARE st_bd FROM @sql_bd; EXECUTE st_bd; DEALLOCATE PREPARE st_bd;
 USE clima_salud_mx;
 
 -- ---------- 1. estados ----------
@@ -13,6 +23,8 @@ CREATE TABLE estados (
   clave     CHAR(2)     NOT NULL UNIQUE,
   nombre    VARCHAR(60) NOT NULL UNIQUE,
   region    VARCHAR(20) NOT NULL,
+  CONSTRAINT ck_estados_clave  CHECK (clave REGEXP '^[0-9]{2}$'),
+  CONSTRAINT ck_estados_nombre CHECK (CHAR_LENGTH(TRIM(nombre)) > 0),
   CONSTRAINT ck_estados_region CHECK (region IN ('Noroeste','Noreste','Occidente','Centro','Sur','Sureste'))
 ) ENGINE=InnoDB;
 
@@ -23,9 +35,11 @@ CREATE TABLE municipios (
   nombre       VARCHAR(80)  NOT NULL,
   poblacion    INT UNSIGNED NOT NULL,
   UNIQUE KEY uq_municipio_estado (id_estado, nombre),
+  KEY ix_mun_nombre (nombre),
   CONSTRAINT fk_mun_estado FOREIGN KEY (id_estado) REFERENCES estados(id_estado)
     ON UPDATE CASCADE ON DELETE RESTRICT,
-  CONSTRAINT ck_mun_poblacion CHECK (poblacion > 0)
+  CONSTRAINT ck_mun_poblacion CHECK (poblacion > 0),
+  CONSTRAINT ck_mun_nombre    CHECK (CHAR_LENGTH(TRIM(nombre)) > 0)
 ) ENGINE=InnoDB;
 
 -- ---------- 3. estaciones meteorológicas ----------
@@ -41,7 +55,9 @@ CREATE TABLE estaciones_meteorologicas (
   CONSTRAINT fk_est_municipio FOREIGN KEY (id_municipio) REFERENCES municipios(id_municipio)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT ck_est_lat CHECK (latitud BETWEEN 14 AND 33),
-  CONSTRAINT ck_est_lon CHECK (longitud BETWEEN -119 AND -86)
+  CONSTRAINT ck_est_lon CHECK (longitud BETWEEN -119 AND -86),
+  CONSTRAINT ck_est_alt CHECK (altitud_m BETWEEN -50 AND 5700),
+  CONSTRAINT ck_est_nombre CHECK (CHAR_LENGTH(TRIM(nombre)) > 0)
 ) ENGINE=InnoDB;
 
 -- ---------- 4. registros de clima (diarios) ----------
@@ -59,10 +75,12 @@ CREATE TABLE registros_clima (
   KEY ix_registro_fecha (fecha),
   CONSTRAINT fk_reg_estacion FOREIGN KEY (id_estacion) REFERENCES estaciones_meteorologicas(id_estacion)
     ON UPDATE CASCADE ON DELETE RESTRICT,
-  CONSTRAINT ck_reg_temp CHECK (temp_max >= temp_min AND temp_max BETWEEN -20 AND 60),
+  CONSTRAINT ck_reg_temp CHECK (temp_max >= temp_min AND temp_max BETWEEN -20 AND 60 AND temp_min BETWEEN -30 AND 50),
   CONSTRAINT ck_reg_hum  CHECK (humedad_pct BETWEEN 0 AND 100),
   CONSTRAINT ck_reg_prec CHECK (precipitacion_mm >= 0),
-  CONSTRAINT ck_reg_uv   CHECK (indice_uv BETWEEN 0 AND 15)
+  CONSTRAINT ck_reg_uv   CHECK (indice_uv BETWEEN 0 AND 15),
+  CONSTRAINT ck_reg_ica  CHECK (ica <= 500),
+  CONSTRAINT ck_reg_fecha CHECK (fecha >= '2000-01-01')
 ) ENGINE=InnoDB;
 
 -- ---------- 5. enfermedades ----------
@@ -70,7 +88,8 @@ CREATE TABLE enfermedades (
   id_enfermedad    INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   nombre           VARCHAR(80) NOT NULL UNIQUE,
   categoria        ENUM('respiratoria','vectorial','gastrointestinal','cardiovascular','golpe_de_calor','otra') NOT NULL,
-  factor_climatico VARCHAR(150) NOT NULL
+  factor_climatico VARCHAR(150) NOT NULL,
+  CONSTRAINT ck_enf_nombre CHECK (CHAR_LENGTH(TRIM(nombre)) > 0)
 ) ENGINE=InnoDB;
 
 -- ---------- 6. unidades de salud ----------
@@ -84,7 +103,8 @@ CREATE TABLE unidades_salud (
   UNIQUE KEY uq_unidad_nombre (nombre),
   CONSTRAINT fk_uni_municipio FOREIGN KEY (id_municipio) REFERENCES municipios(id_municipio)
     ON UPDATE CASCADE ON DELETE RESTRICT,
-  CONSTRAINT ck_uni_camas CHECK (camas >= 0)
+  CONSTRAINT ck_uni_camas CHECK (camas >= 0),
+  CONSTRAINT ck_uni_nombre CHECK (CHAR_LENGTH(TRIM(nombre)) > 0)
 ) ENGINE=InnoDB;
 
 -- ---------- 7. casos de salud (registro mensual por unidad) ----------
@@ -103,7 +123,8 @@ CREATE TABLE casos_salud (
   CONSTRAINT fk_caso_enf FOREIGN KEY (id_enfermedad) REFERENCES enfermedades(id_enfermedad)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT ck_caso_num CHECK (num_casos >= 0),
-  CONSTRAINT ck_caso_def CHECK (defunciones >= 0 AND defunciones <= num_casos)
+  CONSTRAINT ck_caso_def CHECK (defunciones >= 0 AND defunciones <= num_casos),
+  CONSTRAINT ck_caso_fecha CHECK (DAYOFMONTH(fecha) = 1 AND fecha >= '2000-01-01')
 ) ENGINE=InnoDB;
 
 -- ---------- Tabla de apoyo del proceso mensual ----------
@@ -118,6 +139,9 @@ CREATE TABLE resumen_mensual (
   defunciones     INT NOT NULL DEFAULT 0,
   generado_en     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_resumen (id_estado, anio, mes),
+  CONSTRAINT ck_res_mes  CHECK (mes BETWEEN 1 AND 12),
+  CONSTRAINT ck_res_anio CHECK (anio BETWEEN 2000 AND 2100),
+  KEY ix_resumen_anio (anio),
   CONSTRAINT fk_res_estado FOREIGN KEY (id_estado) REFERENCES estados(id_estado)
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB;
@@ -214,15 +238,17 @@ FROM municipios m WHERE m.id_municipio IN (SELECT id_municipio FROM estaciones_m
 -- =====================================================================
 CREATE TEMPORARY TABLE tmp_param (
   nombre VARCHAR(100), temp_media DECIMAL(4,1), amplitud DECIMAL(4,1), rango_diurno DECIMAL(4,1),
-  lluvia_idx DECIMAL(3,2), hum_base TINYINT, uv_base DECIMAL(3,1), ica_base SMALLINT
+  lluvia_idx DECIMAL(3,2), hum_base TINYINT, uv_base DECIMAL(3,1), ica_base SMALLINT,
+  pico_lluvia SMALLINT DEFAULT 221,  -- día del año con más lluvia (221 = agosto; Baja California llueve en invierno)
+  lluvia_anual DECIMAL(7,1)          -- lluvia anual aproximada de la ciudad (mm), para escalar los datos
 );
 INSERT INTO tmp_param VALUES
-('Estación Mexicali',23.0,10.5,16,0.02,30,7.0,80),('Estación Tijuana',17.5,4.5,9,0.20,68,6.0,70),
-('Estación Hermosillo',24.5,8.5,15,0.25,40,7.5,60),('Estación Monterrey',22.5,7.5,11,0.30,55,6.5,85),
-('Estación Guadalajara',20.5,4.0,14,0.70,55,7.0,75),('Estación CDMX Centro',17.0,3.0,13,0.60,55,7.5,95),
-('Estación Mérida',26.5,3.5,11,0.50,70,8.0,45),('Estación Veracruz',25.5,3.5,7,0.70,75,7.5,50),
-('Estación Villahermosa',26.5,3.5,9,0.90,80,7.5,50),('Estación Tapachula',26.5,1.5,10,1.00,80,8.0,40),
-('Estación Cancún',26.5,3.0,8,0.70,75,9.0,40),('Estación La Paz',24.5,6.5,11,0.10,62,8.0,40);
+('Estación Mexicali',23.0,10.5,16,0.02,30,7.0,80,15,75),('Estación Tijuana',17.5,4.5,9,0.20,68,6.0,70,15,230),
+('Estación Hermosillo',24.5,8.5,15,0.25,40,7.5,60,215,330),('Estación Monterrey',22.5,7.5,11,0.30,55,6.5,85,255,650),
+('Estación Guadalajara',20.5,4.0,14,0.70,55,7.0,75,200,950),('Estación CDMX Centro',17.0,3.0,13,0.60,55,7.5,95,200,820),
+('Estación Mérida',26.5,3.5,11,0.50,70,8.0,45,230,1000),('Estación Veracruz',25.5,3.5,7,0.70,75,7.5,50,230,1500),
+('Estación Villahermosa',26.5,3.5,9,0.90,80,7.5,50,265,2200),('Estación Tapachula',26.5,1.5,10,1.00,80,8.0,40,240,2300),
+('Estación Cancún',26.5,3.0,8,0.70,75,9.0,40,270,1300),('Estación La Paz',24.5,6.5,11,0.10,62,8.0,40,250,180);
 
 CREATE TEMPORARY TABLE tmp_dias AS
 WITH RECURSIVE d (fecha) AS (
@@ -233,31 +259,41 @@ INSERT INTO registros_clima (id_estacion, fecha, temp_max, temp_min, humedad_pct
 SELECT id_estacion, fecha,
        ROUND(tp + rango_diurno/2 + (r1-0.5)*2, 1),
        ROUND(tp - rango_diurno/2 + (r1-0.5)*2, 1),
-       LEAST(100, GREATEST(10, ROUND(hum_base + 20*lluvia*lluvia_idx + (r2-0.5)*10))),
+       CAST(LEAST(100, GREATEST(10, ROUND(hum_base + 20*lluvia*lluvia_idx + (r2-0.5)*10))) AS UNSIGNED),
        IF(r3 < 0.55*lluvia*lluvia_idx, ROUND(r4*45*lluvia, 1), 0),
        ROUND(LEAST(14, GREATEST(1, uv_base + 3*estac + (r2-0.5)*2)), 1),
-       GREATEST(15, ROUND(ica_base + (r4-0.5)*40))
+       CAST(GREATEST(15, ROUND(ica_base + (r4-0.5)*40)) AS UNSIGNED)
 FROM (
   SELECT e.id_estacion, d.fecha, p.rango_diurno, p.lluvia_idx, p.hum_base, p.uv_base, p.ica_base,
-         p.temp_media + p.amplitud * SIN(2*PI()*(DAYOFYEAR(d.fecha)-110)/365) + (RAND(e.id_estacion*1000+DAYOFYEAR(d.fecha))-0.5)*3 AS tp,
-         GREATEST(0, SIN(2*PI()*(DAYOFYEAR(d.fecha)-130)/365)) AS lluvia,
+         p.temp_media + p.amplitud * SIN(2*PI()*(DAYOFYEAR(d.fecha)-110)/365) + (RAND(CRC32(CONCAT(e.id_estacion,'-',d.fecha,'-0')))-0.5)*3 AS tp,
+         GREATEST(0, COS(2*PI()*(DAYOFYEAR(d.fecha)-p.pico_lluvia)/365)) AS lluvia,
          SIN(2*PI()*(DAYOFYEAR(d.fecha)-110)/365) AS estac,
-         RAND(e.id_estacion*1000+DAYOFYEAR(d.fecha)+1) r1,
-         RAND(e.id_estacion*1000+DAYOFYEAR(d.fecha)+2) r2,
-         RAND(e.id_estacion*1000+DAYOFYEAR(d.fecha)+3) r3,
-         RAND(e.id_estacion*1000+DAYOFYEAR(d.fecha)+4) r4
+         RAND(CRC32(CONCAT(e.id_estacion,'-',d.fecha,'-1'))) r1,
+         RAND(CRC32(CONCAT(e.id_estacion,'-',d.fecha,'-2'))) r2,
+         RAND(CRC32(CONCAT(e.id_estacion,'-',d.fecha,'-3'))) r3,
+         RAND(CRC32(CONCAT(e.id_estacion,'-',d.fecha,'-4'))) r4
   FROM estaciones_meteorologicas e
   JOIN tmp_param p ON p.nombre = e.nombre
   CROSS JOIN tmp_dias d
 ) t;
+
+-- Se escala la lluvia para que el total anual de cada estación coincida con su promedio aproximado
+UPDATE registros_clima r
+JOIN (SELECT r2.id_estacion, SUM(r2.precipitacion_mm) total, MAX(p.lluvia_anual) objetivo
+      FROM registros_clima r2
+      JOIN estaciones_meteorologicas e ON e.id_estacion = r2.id_estacion
+      JOIN tmp_param p ON p.nombre = e.nombre
+      GROUP BY r2.id_estacion) t ON t.id_estacion = r.id_estacion
+SET r.precipitacion_mm = ROUND(r.precipitacion_mm * t.objetivo / t.total, 1)
+WHERE t.total > 0 AND r.precipitacion_mm > 0;
 
 -- =====================================================================
 -- DATOS SINTÉTICOS: casos de salud mensuales 2025 (dependen del clima del mes)
 -- =====================================================================
 CREATE TEMPORARY TABLE tmp_clima_mes AS
 SELECT e.id_municipio, MONTH(r.fecha) mes,
-       AVG((r.temp_max + r.temp_min)/2) t_prom, AVG(r.temp_max) t_max,
-       SUM(r.precipitacion_mm) lluvia, AVG(r.ica) ica
+       ROUND(AVG((r.temp_max + r.temp_min)/2),2) t_prom, ROUND(AVG(r.temp_max),2) t_max,
+       SUM(r.precipitacion_mm) lluvia, ROUND(AVG(r.ica),2) ica
 FROM registros_clima r JOIN estaciones_meteorologicas e ON e.id_estacion = r.id_estacion
 GROUP BY e.id_municipio, MONTH(r.fecha);
 
@@ -266,7 +302,7 @@ INSERT INTO tmp_edades VALUES ('0-14',0.9),('15-44',1.0),('45-64',0.8),('65+',0.
 
 INSERT INTO casos_salud (id_unidad, id_enfermedad, fecha, grupo_edad, num_casos, defunciones)
 SELECT id_unidad, id_enfermedad, fecha, grupo, n,
-       LEAST(n, FLOOR(n * letalidad * RAND(id_unidad*7919+id_enfermedad*104729+mes*13+9)))
+       LEAST(n, FLOOR(n * letalidad + RAND(CRC32(CONCAT(id_unidad,'-',id_enfermedad,'-',mes,'-',grupo)))))
 FROM (
   SELECT u.id_unidad, en.id_enfermedad, MAKEDATE(2025,1) + INTERVAL (c.mes-1) MONTH AS fecha, c.mes, ed.grupo,
     CASE en.nombre
@@ -283,7 +319,7 @@ FROM (
         WHEN 'Enfermedad diarreica aguda'   THEN 0.2 + GREATEST(0, c.t_prom-15)/12
         WHEN 'Asma'          THEN 0.2 + GREATEST(0, 22-c.t_prom)/10 + c.ica/250
         ELSE GREATEST(0, 20-c.t_prom)/6 END
-      * (0.6 + 0.8*RAND(u.id_unidad*7919+en.id_enfermedad*104729+c.mes*13))
+      * (0.6 + 0.8*RAND(CRC32(CONCAT(u.id_unidad,'-',en.id_enfermedad,'-',c.mes,'-',ed.grupo,'-n'))))
     )) AS n
   FROM unidades_salud u
   JOIN tmp_clima_mes c ON c.id_municipio = u.id_municipio
@@ -297,107 +333,115 @@ DROP TEMPORARY TABLE tmp_param, tmp_dias, tmp_clima_mes, tmp_edades;
 -- ################ 02_funciones.sql ################
 -- Archivo 02: funciones almacenadas
 USE clima_salud_mx;
-DROP FUNCTION IF EXISTS fn_temp_promedio;
-DROP FUNCTION IF EXISTS fn_nivel_riesgo_calor;
-DROP FUNCTION IF EXISTS fn_tasa_letalidad;
-DROP FUNCTION IF EXISTS fn_tasa_100k;
 DELIMITER $$
-CREATE FUNCTION fn_temp_promedio(p_max DECIMAL(4,1), p_min DECIMAL(4,1))
-RETURNS DECIMAL(4,1) DETERMINISTIC
+CREATE FUNCTION fn_temp_promedio(p_max DECIMAL(6,2), p_min DECIMAL(6,2))
+RETURNS DECIMAL(4,1) DETERMINISTIC NO SQL
 BEGIN
   RETURN ROUND((p_max + p_min) / 2, 1);
 END$$
 
-CREATE FUNCTION fn_nivel_riesgo_calor(p_temp_max DECIMAL(4,1))
-RETURNS VARCHAR(10) DETERMINISTIC
+CREATE FUNCTION fn_nivel_riesgo_calor(p_temp_max DECIMAL(6,2))
+RETURNS VARCHAR(10) DETERMINISTIC NO SQL
 BEGIN
-  RETURN CASE WHEN p_temp_max < 30 THEN 'bajo'
+  RETURN CASE WHEN p_temp_max IS NULL THEN NULL
+              WHEN p_temp_max < 30 THEN 'bajo'
               WHEN p_temp_max < 35 THEN 'moderado'
               WHEN p_temp_max < 40 THEN 'alto'
               ELSE 'extremo' END;
 END$$
 
 -- Porcentaje de defunciones sobre casos
-CREATE FUNCTION fn_tasa_letalidad(p_casos INT, p_defunciones INT)
-RETURNS DECIMAL(5,2) DETERMINISTIC
+CREATE FUNCTION fn_tasa_letalidad(p_casos BIGINT, p_defunciones BIGINT)
+RETURNS DECIMAL(5,2) DETERMINISTIC NO SQL
 BEGIN
-  IF p_casos IS NULL OR p_casos = 0 THEN RETURN 0; END IF;
+  IF p_casos IS NULL OR p_casos <= 0 OR p_defunciones IS NULL OR p_defunciones < 0 THEN RETURN 0; END IF;
+  IF p_defunciones > p_casos THEN RETURN 100; END IF;
   RETURN ROUND(p_defunciones * 100 / p_casos, 2);
 END$$
 
 -- Casos por cada 100,000 habitantes
-CREATE FUNCTION fn_tasa_100k(p_casos INT, p_poblacion INT)
-RETURNS DECIMAL(10,2) DETERMINISTIC
+CREATE FUNCTION fn_tasa_100k(p_casos BIGINT, p_poblacion BIGINT)
+RETURNS DECIMAL(12,2) DETERMINISTIC NO SQL
 BEGIN
-  IF p_poblacion IS NULL OR p_poblacion = 0 THEN RETURN 0; END IF;
+  IF p_poblacion IS NULL OR p_poblacion <= 0 OR p_casos IS NULL OR p_casos < 0 THEN RETURN 0; END IF;
   RETURN ROUND(p_casos * 100000 / p_poblacion, 2);
 END$$
 DELIMITER ;
 
 -- ################ 03_procedimientos_crud.sql ################
--- Archivo 03: procedimientos almacenados CRUD (generado)
+-- Archivo 03: procedimientos almacenados CRUD
+-- * crear:      devuelve el id nuevo en el parámetro OUT
+-- * actualizar: un parámetro en NULL significa "dejar el valor actual"
+-- * listar:     p_limite = máximo de filas (NULL, 0 o negativo = 1000)
+-- Los datos se normalizan (redondeo de decimales, fecha sin hora) ANTES de
+-- escribir, para que el registro nunca se guarde a medias.
 USE clima_salud_mx;
 
-DROP PROCEDURE IF EXISTS sp_estado_crear;
-DROP PROCEDURE IF EXISTS sp_estado_leer;
-DROP PROCEDURE IF EXISTS sp_estado_listar;
-DROP PROCEDURE IF EXISTS sp_estado_actualizar;
-DROP PROCEDURE IF EXISTS sp_estado_eliminar;
 DELIMITER $$
 
 CREATE PROCEDURE sp_estado_crear(
-  IN p_clave CHAR(2),
-  IN p_nombre VARCHAR(60),
-  IN p_region VARCHAR(20),
-  OUT p_id_estado INT UNSIGNED
+  IN p_clave VARCHAR(1000),
+  IN p_nombre VARCHAR(1000),
+  IN p_region VARCHAR(1000),
+  OUT p_id_estado BIGINT UNSIGNED
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  INSERT INTO estados (clave, nombre, region) VALUES (p_clave, p_nombre, p_region);
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  INSERT INTO estados (clave, nombre, region)
+  VALUES (p_clave, p_nombre, p_region);
   SET p_id_estado = LAST_INSERT_ID();
 END$$
 
-CREATE PROCEDURE sp_estado_leer(IN p_id_estado INT UNSIGNED)
+CREATE PROCEDURE sp_estado_leer(IN p_id_estado BIGINT)
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM estados WHERE id_estado = p_id_estado) THEN
+  IF p_id_estado IS NULL OR NOT EXISTS (SELECT 1 FROM estados WHERE id_estado = p_id_estado) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El registro solicitado no existe en estados';
   END IF;
   SELECT * FROM estados WHERE id_estado = p_id_estado;
 END$$
 
-CREATE PROCEDURE sp_estado_listar(IN p_limite INT)
+CREATE PROCEDURE sp_estado_listar(IN p_limite BIGINT)
 BEGIN
-  DECLARE v_limite INT DEFAULT 1000;
+  DECLARE v_limite BIGINT DEFAULT 1000;
   IF p_limite IS NOT NULL AND p_limite > 0 THEN SET v_limite = p_limite; END IF;
   SELECT * FROM estados ORDER BY id_estado LIMIT v_limite;
 END$$
 
 CREATE PROCEDURE sp_estado_actualizar(
-  IN p_id_estado INT UNSIGNED,
-  IN p_clave CHAR(2),
-  IN p_nombre VARCHAR(60),
-  IN p_region VARCHAR(20)
+  IN p_id_estado BIGINT,
+  IN p_clave VARCHAR(1000),
+  IN p_nombre VARCHAR(1000),
+  IN p_region VARCHAR(1000)
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  IF NOT EXISTS (SELECT 1 FROM estados WHERE id_estado = p_id_estado) THEN
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  IF p_id_estado IS NULL OR NOT EXISTS (SELECT 1 FROM estados WHERE id_estado = p_id_estado) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede actualizar: el registro no existe en estados';
   END IF;
-  UPDATE estados SET clave = p_clave, nombre = p_nombre, region = p_region WHERE id_estado = p_id_estado;
+  UPDATE estados SET clave = COALESCE(p_clave, clave), nombre = COALESCE(p_nombre, nombre), region = COALESCE(p_region, region)
+  WHERE id_estado = p_id_estado;
 END$$
 
-CREATE PROCEDURE sp_estado_eliminar(IN p_id_estado INT UNSIGNED)
+CREATE PROCEDURE sp_estado_eliminar(IN p_id_estado BIGINT)
 BEGIN
   DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: tiene registros relacionados en otras tablas';
-  IF NOT EXISTS (SELECT 1 FROM estados WHERE id_estado = p_id_estado) THEN
+  IF p_id_estado IS NULL OR NOT EXISTS (SELECT 1 FROM estados WHERE id_estado = p_id_estado) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: el registro no existe en estados';
   END IF;
   DELETE FROM estados WHERE id_estado = p_id_estado;
@@ -405,66 +449,71 @@ END$$
 
 DELIMITER ;
 
-DROP PROCEDURE IF EXISTS sp_municipio_crear;
-DROP PROCEDURE IF EXISTS sp_municipio_leer;
-DROP PROCEDURE IF EXISTS sp_municipio_listar;
-DROP PROCEDURE IF EXISTS sp_municipio_actualizar;
-DROP PROCEDURE IF EXISTS sp_municipio_eliminar;
 DELIMITER $$
 
 CREATE PROCEDURE sp_municipio_crear(
-  IN p_id_estado INT UNSIGNED,
-  IN p_nombre VARCHAR(80),
-  IN p_poblacion INT UNSIGNED,
-  OUT p_id_municipio INT UNSIGNED
+  IN p_id_estado BIGINT,
+  IN p_nombre VARCHAR(1000),
+  IN p_poblacion BIGINT,
+  OUT p_id_municipio BIGINT UNSIGNED
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  INSERT INTO municipios (id_estado, nombre, poblacion) VALUES (p_id_estado, p_nombre, p_poblacion);
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  INSERT INTO municipios (id_estado, nombre, poblacion)
+  VALUES (p_id_estado, p_nombre, p_poblacion);
   SET p_id_municipio = LAST_INSERT_ID();
 END$$
 
-CREATE PROCEDURE sp_municipio_leer(IN p_id_municipio INT UNSIGNED)
+CREATE PROCEDURE sp_municipio_leer(IN p_id_municipio BIGINT)
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM municipios WHERE id_municipio = p_id_municipio) THEN
+  IF p_id_municipio IS NULL OR NOT EXISTS (SELECT 1 FROM municipios WHERE id_municipio = p_id_municipio) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El registro solicitado no existe en municipios';
   END IF;
   SELECT * FROM municipios WHERE id_municipio = p_id_municipio;
 END$$
 
-CREATE PROCEDURE sp_municipio_listar(IN p_limite INT)
+CREATE PROCEDURE sp_municipio_listar(IN p_limite BIGINT)
 BEGIN
-  DECLARE v_limite INT DEFAULT 1000;
+  DECLARE v_limite BIGINT DEFAULT 1000;
   IF p_limite IS NOT NULL AND p_limite > 0 THEN SET v_limite = p_limite; END IF;
   SELECT * FROM municipios ORDER BY id_municipio LIMIT v_limite;
 END$$
 
 CREATE PROCEDURE sp_municipio_actualizar(
-  IN p_id_municipio INT UNSIGNED,
-  IN p_id_estado INT UNSIGNED,
-  IN p_nombre VARCHAR(80),
-  IN p_poblacion INT UNSIGNED
+  IN p_id_municipio BIGINT,
+  IN p_id_estado BIGINT,
+  IN p_nombre VARCHAR(1000),
+  IN p_poblacion BIGINT
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  IF NOT EXISTS (SELECT 1 FROM municipios WHERE id_municipio = p_id_municipio) THEN
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  IF p_id_municipio IS NULL OR NOT EXISTS (SELECT 1 FROM municipios WHERE id_municipio = p_id_municipio) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede actualizar: el registro no existe en municipios';
   END IF;
-  UPDATE municipios SET id_estado = p_id_estado, nombre = p_nombre, poblacion = p_poblacion WHERE id_municipio = p_id_municipio;
+  UPDATE municipios SET id_estado = COALESCE(p_id_estado, id_estado), nombre = COALESCE(p_nombre, nombre), poblacion = COALESCE(p_poblacion, poblacion)
+  WHERE id_municipio = p_id_municipio;
 END$$
 
-CREATE PROCEDURE sp_municipio_eliminar(IN p_id_municipio INT UNSIGNED)
+CREATE PROCEDURE sp_municipio_eliminar(IN p_id_municipio BIGINT)
 BEGIN
   DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: tiene registros relacionados en otras tablas';
-  IF NOT EXISTS (SELECT 1 FROM municipios WHERE id_municipio = p_id_municipio) THEN
+  IF p_id_municipio IS NULL OR NOT EXISTS (SELECT 1 FROM municipios WHERE id_municipio = p_id_municipio) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: el registro no existe en municipios';
   END IF;
   DELETE FROM municipios WHERE id_municipio = p_id_municipio;
@@ -472,72 +521,77 @@ END$$
 
 DELIMITER ;
 
-DROP PROCEDURE IF EXISTS sp_estacion_crear;
-DROP PROCEDURE IF EXISTS sp_estacion_leer;
-DROP PROCEDURE IF EXISTS sp_estacion_listar;
-DROP PROCEDURE IF EXISTS sp_estacion_actualizar;
-DROP PROCEDURE IF EXISTS sp_estacion_eliminar;
 DELIMITER $$
 
 CREATE PROCEDURE sp_estacion_crear(
-  IN p_id_municipio INT UNSIGNED,
-  IN p_nombre VARCHAR(100),
-  IN p_latitud DECIMAL(9,6),
-  IN p_longitud DECIMAL(9,6),
-  IN p_altitud_m INT,
-  IN p_estatus VARCHAR(15),
-  OUT p_id_estacion INT UNSIGNED
+  IN p_id_municipio BIGINT,
+  IN p_nombre VARCHAR(1000),
+  IN p_latitud DECIMAL(20,6),
+  IN p_longitud DECIMAL(20,6),
+  IN p_altitud_m BIGINT,
+  IN p_estatus VARCHAR(1000),
+  OUT p_id_estacion BIGINT UNSIGNED
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  INSERT INTO estaciones_meteorologicas (id_municipio, nombre, latitud, longitud, altitud_m, estatus) VALUES (p_id_municipio, p_nombre, p_latitud, p_longitud, p_altitud_m, p_estatus);
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  INSERT INTO estaciones_meteorologicas (id_municipio, nombre, latitud, longitud, altitud_m, estatus)
+  VALUES (p_id_municipio, p_nombre, ROUND(p_latitud, 6), ROUND(p_longitud, 6), p_altitud_m, IFNULL(p_estatus, 'activa'));
   SET p_id_estacion = LAST_INSERT_ID();
 END$$
 
-CREATE PROCEDURE sp_estacion_leer(IN p_id_estacion INT UNSIGNED)
+CREATE PROCEDURE sp_estacion_leer(IN p_id_estacion BIGINT)
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion) THEN
+  IF p_id_estacion IS NULL OR NOT EXISTS (SELECT 1 FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El registro solicitado no existe en estaciones_meteorologicas';
   END IF;
   SELECT * FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion;
 END$$
 
-CREATE PROCEDURE sp_estacion_listar(IN p_limite INT)
+CREATE PROCEDURE sp_estacion_listar(IN p_limite BIGINT)
 BEGIN
-  DECLARE v_limite INT DEFAULT 1000;
+  DECLARE v_limite BIGINT DEFAULT 1000;
   IF p_limite IS NOT NULL AND p_limite > 0 THEN SET v_limite = p_limite; END IF;
   SELECT * FROM estaciones_meteorologicas ORDER BY id_estacion LIMIT v_limite;
 END$$
 
 CREATE PROCEDURE sp_estacion_actualizar(
-  IN p_id_estacion INT UNSIGNED,
-  IN p_id_municipio INT UNSIGNED,
-  IN p_nombre VARCHAR(100),
-  IN p_latitud DECIMAL(9,6),
-  IN p_longitud DECIMAL(9,6),
-  IN p_altitud_m INT,
-  IN p_estatus VARCHAR(15)
+  IN p_id_estacion BIGINT,
+  IN p_id_municipio BIGINT,
+  IN p_nombre VARCHAR(1000),
+  IN p_latitud DECIMAL(20,6),
+  IN p_longitud DECIMAL(20,6),
+  IN p_altitud_m BIGINT,
+  IN p_estatus VARCHAR(1000)
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  IF NOT EXISTS (SELECT 1 FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion) THEN
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  IF p_id_estacion IS NULL OR NOT EXISTS (SELECT 1 FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede actualizar: el registro no existe en estaciones_meteorologicas';
   END IF;
-  UPDATE estaciones_meteorologicas SET id_municipio = p_id_municipio, nombre = p_nombre, latitud = p_latitud, longitud = p_longitud, altitud_m = p_altitud_m, estatus = p_estatus WHERE id_estacion = p_id_estacion;
+  UPDATE estaciones_meteorologicas SET id_municipio = COALESCE(p_id_municipio, id_municipio), nombre = COALESCE(p_nombre, nombre), latitud = COALESCE(ROUND(p_latitud, 6), latitud), longitud = COALESCE(ROUND(p_longitud, 6), longitud), altitud_m = COALESCE(p_altitud_m, altitud_m), estatus = COALESCE(p_estatus, estatus)
+  WHERE id_estacion = p_id_estacion;
 END$$
 
-CREATE PROCEDURE sp_estacion_eliminar(IN p_id_estacion INT UNSIGNED)
+CREATE PROCEDURE sp_estacion_eliminar(IN p_id_estacion BIGINT)
 BEGIN
   DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: tiene registros relacionados en otras tablas';
-  IF NOT EXISTS (SELECT 1 FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion) THEN
+  IF p_id_estacion IS NULL OR NOT EXISTS (SELECT 1 FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: el registro no existe en estaciones_meteorologicas';
   END IF;
   DELETE FROM estaciones_meteorologicas WHERE id_estacion = p_id_estacion;
@@ -545,76 +599,93 @@ END$$
 
 DELIMITER ;
 
-DROP PROCEDURE IF EXISTS sp_registro_clima_crear;
-DROP PROCEDURE IF EXISTS sp_registro_clima_leer;
-DROP PROCEDURE IF EXISTS sp_registro_clima_listar;
-DROP PROCEDURE IF EXISTS sp_registro_clima_actualizar;
-DROP PROCEDURE IF EXISTS sp_registro_clima_eliminar;
 DELIMITER $$
 
 CREATE PROCEDURE sp_registro_clima_crear(
-  IN p_id_estacion INT UNSIGNED,
-  IN p_fecha DATE,
-  IN p_temp_max DECIMAL(4,1),
-  IN p_temp_min DECIMAL(4,1),
-  IN p_humedad_pct TINYINT UNSIGNED,
-  IN p_precipitacion_mm DECIMAL(6,1),
-  IN p_indice_uv DECIMAL(3,1),
-  IN p_ica SMALLINT UNSIGNED,
+  IN p_id_estacion BIGINT,
+  IN p_fecha VARCHAR(30),
+  IN p_temp_max DECIMAL(20,6),
+  IN p_temp_min DECIMAL(20,6),
+  IN p_humedad_pct BIGINT,
+  IN p_precipitacion_mm DECIMAL(20,6),
+  IN p_indice_uv DECIMAL(20,6),
+  IN p_ica BIGINT,
   OUT p_id_registro BIGINT UNSIGNED
 )
 BEGIN
+  DECLARE v_fecha DATE;
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  INSERT INTO registros_clima (id_estacion, fecha, temp_max, temp_min, humedad_pct, precipitacion_mm, indice_uv, ica) VALUES (p_id_estacion, p_fecha, p_temp_max, p_temp_min, p_humedad_pct, p_precipitacion_mm, p_indice_uv, p_ica);
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  -- fecha: se valida y se quita la hora (si la trae) antes de guardar
+  SET v_fecha = IF(p_fecha IS NULL, NULL, DATE(CAST(p_fecha AS DATETIME)));
+  IF p_fecha IS NOT NULL AND v_fecha IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  END IF;
+  INSERT INTO registros_clima (id_estacion, fecha, temp_max, temp_min, humedad_pct, precipitacion_mm, indice_uv, ica)
+  VALUES (p_id_estacion, v_fecha, ROUND(p_temp_max, 1), ROUND(p_temp_min, 1), p_humedad_pct, IFNULL(ROUND(p_precipitacion_mm, 1), 0), ROUND(p_indice_uv, 1), p_ica);
   SET p_id_registro = LAST_INSERT_ID();
 END$$
 
-CREATE PROCEDURE sp_registro_clima_leer(IN p_id_registro BIGINT UNSIGNED)
+CREATE PROCEDURE sp_registro_clima_leer(IN p_id_registro BIGINT)
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM registros_clima WHERE id_registro = p_id_registro) THEN
+  IF p_id_registro IS NULL OR NOT EXISTS (SELECT 1 FROM registros_clima WHERE id_registro = p_id_registro) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El registro solicitado no existe en registros_clima';
   END IF;
   SELECT * FROM registros_clima WHERE id_registro = p_id_registro;
 END$$
 
-CREATE PROCEDURE sp_registro_clima_listar(IN p_limite INT)
+CREATE PROCEDURE sp_registro_clima_listar(IN p_limite BIGINT)
 BEGIN
-  DECLARE v_limite INT DEFAULT 1000;
+  DECLARE v_limite BIGINT DEFAULT 1000;
   IF p_limite IS NOT NULL AND p_limite > 0 THEN SET v_limite = p_limite; END IF;
   SELECT * FROM registros_clima ORDER BY id_registro LIMIT v_limite;
 END$$
 
 CREATE PROCEDURE sp_registro_clima_actualizar(
-  IN p_id_registro BIGINT UNSIGNED,
-  IN p_id_estacion INT UNSIGNED,
-  IN p_fecha DATE,
-  IN p_temp_max DECIMAL(4,1),
-  IN p_temp_min DECIMAL(4,1),
-  IN p_humedad_pct TINYINT UNSIGNED,
-  IN p_precipitacion_mm DECIMAL(6,1),
-  IN p_indice_uv DECIMAL(3,1),
-  IN p_ica SMALLINT UNSIGNED
+  IN p_id_registro BIGINT,
+  IN p_id_estacion BIGINT,
+  IN p_fecha VARCHAR(30),
+  IN p_temp_max DECIMAL(20,6),
+  IN p_temp_min DECIMAL(20,6),
+  IN p_humedad_pct BIGINT,
+  IN p_precipitacion_mm DECIMAL(20,6),
+  IN p_indice_uv DECIMAL(20,6),
+  IN p_ica BIGINT
 )
 BEGIN
+  DECLARE v_fecha DATE;
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  IF NOT EXISTS (SELECT 1 FROM registros_clima WHERE id_registro = p_id_registro) THEN
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  IF p_id_registro IS NULL OR NOT EXISTS (SELECT 1 FROM registros_clima WHERE id_registro = p_id_registro) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede actualizar: el registro no existe en registros_clima';
   END IF;
-  UPDATE registros_clima SET id_estacion = p_id_estacion, fecha = p_fecha, temp_max = p_temp_max, temp_min = p_temp_min, humedad_pct = p_humedad_pct, precipitacion_mm = p_precipitacion_mm, indice_uv = p_indice_uv, ica = p_ica WHERE id_registro = p_id_registro;
+  -- fecha: se valida y se quita la hora (si la trae) antes de guardar
+  SET v_fecha = IF(p_fecha IS NULL, NULL, DATE(CAST(p_fecha AS DATETIME)));
+  IF p_fecha IS NOT NULL AND v_fecha IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  END IF;
+  UPDATE registros_clima SET id_estacion = COALESCE(p_id_estacion, id_estacion), fecha = COALESCE(v_fecha, fecha), temp_max = COALESCE(ROUND(p_temp_max, 1), temp_max), temp_min = COALESCE(ROUND(p_temp_min, 1), temp_min), humedad_pct = COALESCE(p_humedad_pct, humedad_pct), precipitacion_mm = COALESCE(ROUND(p_precipitacion_mm, 1), precipitacion_mm), indice_uv = COALESCE(ROUND(p_indice_uv, 1), indice_uv), ica = COALESCE(p_ica, ica)
+  WHERE id_registro = p_id_registro;
 END$$
 
-CREATE PROCEDURE sp_registro_clima_eliminar(IN p_id_registro BIGINT UNSIGNED)
+CREATE PROCEDURE sp_registro_clima_eliminar(IN p_id_registro BIGINT)
 BEGIN
   DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: tiene registros relacionados en otras tablas';
-  IF NOT EXISTS (SELECT 1 FROM registros_clima WHERE id_registro = p_id_registro) THEN
+  IF p_id_registro IS NULL OR NOT EXISTS (SELECT 1 FROM registros_clima WHERE id_registro = p_id_registro) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: el registro no existe en registros_clima';
   END IF;
   DELETE FROM registros_clima WHERE id_registro = p_id_registro;
@@ -622,66 +693,71 @@ END$$
 
 DELIMITER ;
 
-DROP PROCEDURE IF EXISTS sp_enfermedad_crear;
-DROP PROCEDURE IF EXISTS sp_enfermedad_leer;
-DROP PROCEDURE IF EXISTS sp_enfermedad_listar;
-DROP PROCEDURE IF EXISTS sp_enfermedad_actualizar;
-DROP PROCEDURE IF EXISTS sp_enfermedad_eliminar;
 DELIMITER $$
 
 CREATE PROCEDURE sp_enfermedad_crear(
-  IN p_nombre VARCHAR(80),
-  IN p_categoria VARCHAR(20),
-  IN p_factor_climatico VARCHAR(150),
-  OUT p_id_enfermedad INT UNSIGNED
+  IN p_nombre VARCHAR(1000),
+  IN p_categoria VARCHAR(1000),
+  IN p_factor_climatico VARCHAR(1000),
+  OUT p_id_enfermedad BIGINT UNSIGNED
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  INSERT INTO enfermedades (nombre, categoria, factor_climatico) VALUES (p_nombre, p_categoria, p_factor_climatico);
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  INSERT INTO enfermedades (nombre, categoria, factor_climatico)
+  VALUES (p_nombre, p_categoria, p_factor_climatico);
   SET p_id_enfermedad = LAST_INSERT_ID();
 END$$
 
-CREATE PROCEDURE sp_enfermedad_leer(IN p_id_enfermedad INT UNSIGNED)
+CREATE PROCEDURE sp_enfermedad_leer(IN p_id_enfermedad BIGINT)
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM enfermedades WHERE id_enfermedad = p_id_enfermedad) THEN
+  IF p_id_enfermedad IS NULL OR NOT EXISTS (SELECT 1 FROM enfermedades WHERE id_enfermedad = p_id_enfermedad) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El registro solicitado no existe en enfermedades';
   END IF;
   SELECT * FROM enfermedades WHERE id_enfermedad = p_id_enfermedad;
 END$$
 
-CREATE PROCEDURE sp_enfermedad_listar(IN p_limite INT)
+CREATE PROCEDURE sp_enfermedad_listar(IN p_limite BIGINT)
 BEGIN
-  DECLARE v_limite INT DEFAULT 1000;
+  DECLARE v_limite BIGINT DEFAULT 1000;
   IF p_limite IS NOT NULL AND p_limite > 0 THEN SET v_limite = p_limite; END IF;
   SELECT * FROM enfermedades ORDER BY id_enfermedad LIMIT v_limite;
 END$$
 
 CREATE PROCEDURE sp_enfermedad_actualizar(
-  IN p_id_enfermedad INT UNSIGNED,
-  IN p_nombre VARCHAR(80),
-  IN p_categoria VARCHAR(20),
-  IN p_factor_climatico VARCHAR(150)
+  IN p_id_enfermedad BIGINT,
+  IN p_nombre VARCHAR(1000),
+  IN p_categoria VARCHAR(1000),
+  IN p_factor_climatico VARCHAR(1000)
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  IF NOT EXISTS (SELECT 1 FROM enfermedades WHERE id_enfermedad = p_id_enfermedad) THEN
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  IF p_id_enfermedad IS NULL OR NOT EXISTS (SELECT 1 FROM enfermedades WHERE id_enfermedad = p_id_enfermedad) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede actualizar: el registro no existe en enfermedades';
   END IF;
-  UPDATE enfermedades SET nombre = p_nombre, categoria = p_categoria, factor_climatico = p_factor_climatico WHERE id_enfermedad = p_id_enfermedad;
+  UPDATE enfermedades SET nombre = COALESCE(p_nombre, nombre), categoria = COALESCE(p_categoria, categoria), factor_climatico = COALESCE(p_factor_climatico, factor_climatico)
+  WHERE id_enfermedad = p_id_enfermedad;
 END$$
 
-CREATE PROCEDURE sp_enfermedad_eliminar(IN p_id_enfermedad INT UNSIGNED)
+CREATE PROCEDURE sp_enfermedad_eliminar(IN p_id_enfermedad BIGINT)
 BEGIN
   DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: tiene registros relacionados en otras tablas';
-  IF NOT EXISTS (SELECT 1 FROM enfermedades WHERE id_enfermedad = p_id_enfermedad) THEN
+  IF p_id_enfermedad IS NULL OR NOT EXISTS (SELECT 1 FROM enfermedades WHERE id_enfermedad = p_id_enfermedad) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: el registro no existe en enfermedades';
   END IF;
   DELETE FROM enfermedades WHERE id_enfermedad = p_id_enfermedad;
@@ -689,70 +765,75 @@ END$$
 
 DELIMITER ;
 
-DROP PROCEDURE IF EXISTS sp_unidad_salud_crear;
-DROP PROCEDURE IF EXISTS sp_unidad_salud_leer;
-DROP PROCEDURE IF EXISTS sp_unidad_salud_listar;
-DROP PROCEDURE IF EXISTS sp_unidad_salud_actualizar;
-DROP PROCEDURE IF EXISTS sp_unidad_salud_eliminar;
 DELIMITER $$
 
 CREATE PROCEDURE sp_unidad_salud_crear(
-  IN p_id_municipio INT UNSIGNED,
-  IN p_nombre VARCHAR(120),
-  IN p_tipo VARCHAR(20),
-  IN p_institucion VARCHAR(10),
-  IN p_camas INT,
-  OUT p_id_unidad INT UNSIGNED
+  IN p_id_municipio BIGINT,
+  IN p_nombre VARCHAR(1000),
+  IN p_tipo VARCHAR(1000),
+  IN p_institucion VARCHAR(1000),
+  IN p_camas BIGINT,
+  OUT p_id_unidad BIGINT UNSIGNED
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  INSERT INTO unidades_salud (id_municipio, nombre, tipo, institucion, camas) VALUES (p_id_municipio, p_nombre, p_tipo, p_institucion, p_camas);
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  INSERT INTO unidades_salud (id_municipio, nombre, tipo, institucion, camas)
+  VALUES (p_id_municipio, p_nombre, p_tipo, p_institucion, IFNULL(p_camas, 0));
   SET p_id_unidad = LAST_INSERT_ID();
 END$$
 
-CREATE PROCEDURE sp_unidad_salud_leer(IN p_id_unidad INT UNSIGNED)
+CREATE PROCEDURE sp_unidad_salud_leer(IN p_id_unidad BIGINT)
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM unidades_salud WHERE id_unidad = p_id_unidad) THEN
+  IF p_id_unidad IS NULL OR NOT EXISTS (SELECT 1 FROM unidades_salud WHERE id_unidad = p_id_unidad) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El registro solicitado no existe en unidades_salud';
   END IF;
   SELECT * FROM unidades_salud WHERE id_unidad = p_id_unidad;
 END$$
 
-CREATE PROCEDURE sp_unidad_salud_listar(IN p_limite INT)
+CREATE PROCEDURE sp_unidad_salud_listar(IN p_limite BIGINT)
 BEGIN
-  DECLARE v_limite INT DEFAULT 1000;
+  DECLARE v_limite BIGINT DEFAULT 1000;
   IF p_limite IS NOT NULL AND p_limite > 0 THEN SET v_limite = p_limite; END IF;
   SELECT * FROM unidades_salud ORDER BY id_unidad LIMIT v_limite;
 END$$
 
 CREATE PROCEDURE sp_unidad_salud_actualizar(
-  IN p_id_unidad INT UNSIGNED,
-  IN p_id_municipio INT UNSIGNED,
-  IN p_nombre VARCHAR(120),
-  IN p_tipo VARCHAR(20),
-  IN p_institucion VARCHAR(10),
-  IN p_camas INT
+  IN p_id_unidad BIGINT,
+  IN p_id_municipio BIGINT,
+  IN p_nombre VARCHAR(1000),
+  IN p_tipo VARCHAR(1000),
+  IN p_institucion VARCHAR(1000),
+  IN p_camas BIGINT
 )
 BEGIN
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  IF NOT EXISTS (SELECT 1 FROM unidades_salud WHERE id_unidad = p_id_unidad) THEN
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  IF p_id_unidad IS NULL OR NOT EXISTS (SELECT 1 FROM unidades_salud WHERE id_unidad = p_id_unidad) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede actualizar: el registro no existe en unidades_salud';
   END IF;
-  UPDATE unidades_salud SET id_municipio = p_id_municipio, nombre = p_nombre, tipo = p_tipo, institucion = p_institucion, camas = p_camas WHERE id_unidad = p_id_unidad;
+  UPDATE unidades_salud SET id_municipio = COALESCE(p_id_municipio, id_municipio), nombre = COALESCE(p_nombre, nombre), tipo = COALESCE(p_tipo, tipo), institucion = COALESCE(p_institucion, institucion), camas = COALESCE(p_camas, camas)
+  WHERE id_unidad = p_id_unidad;
 END$$
 
-CREATE PROCEDURE sp_unidad_salud_eliminar(IN p_id_unidad INT UNSIGNED)
+CREATE PROCEDURE sp_unidad_salud_eliminar(IN p_id_unidad BIGINT)
 BEGIN
   DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: tiene registros relacionados en otras tablas';
-  IF NOT EXISTS (SELECT 1 FROM unidades_salud WHERE id_unidad = p_id_unidad) THEN
+  IF p_id_unidad IS NULL OR NOT EXISTS (SELECT 1 FROM unidades_salud WHERE id_unidad = p_id_unidad) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: el registro no existe en unidades_salud';
   END IF;
   DELETE FROM unidades_salud WHERE id_unidad = p_id_unidad;
@@ -760,72 +841,89 @@ END$$
 
 DELIMITER ;
 
-DROP PROCEDURE IF EXISTS sp_caso_salud_crear;
-DROP PROCEDURE IF EXISTS sp_caso_salud_leer;
-DROP PROCEDURE IF EXISTS sp_caso_salud_listar;
-DROP PROCEDURE IF EXISTS sp_caso_salud_actualizar;
-DROP PROCEDURE IF EXISTS sp_caso_salud_eliminar;
 DELIMITER $$
 
 CREATE PROCEDURE sp_caso_salud_crear(
-  IN p_id_unidad INT UNSIGNED,
-  IN p_id_enfermedad INT UNSIGNED,
-  IN p_fecha DATE,
-  IN p_grupo_edad VARCHAR(5),
-  IN p_num_casos INT,
-  IN p_defunciones INT,
+  IN p_id_unidad BIGINT,
+  IN p_id_enfermedad BIGINT,
+  IN p_fecha VARCHAR(30),
+  IN p_grupo_edad VARCHAR(1000),
+  IN p_num_casos BIGINT,
+  IN p_defunciones BIGINT,
   OUT p_id_caso BIGINT UNSIGNED
 )
 BEGIN
+  DECLARE v_fecha DATE;
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  INSERT INTO casos_salud (id_unidad, id_enfermedad, fecha, grupo_edad, num_casos, defunciones) VALUES (p_id_unidad, p_id_enfermedad, p_fecha, p_grupo_edad, p_num_casos, p_defunciones);
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  -- fecha: se valida y se quita la hora (si la trae) antes de guardar
+  SET v_fecha = IF(p_fecha IS NULL, NULL, DATE(CAST(p_fecha AS DATETIME)));
+  IF p_fecha IS NOT NULL AND v_fecha IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  END IF;
+  INSERT INTO casos_salud (id_unidad, id_enfermedad, fecha, grupo_edad, num_casos, defunciones)
+  VALUES (p_id_unidad, p_id_enfermedad, v_fecha, p_grupo_edad, p_num_casos, IFNULL(p_defunciones, 0));
   SET p_id_caso = LAST_INSERT_ID();
 END$$
 
-CREATE PROCEDURE sp_caso_salud_leer(IN p_id_caso BIGINT UNSIGNED)
+CREATE PROCEDURE sp_caso_salud_leer(IN p_id_caso BIGINT)
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM casos_salud WHERE id_caso = p_id_caso) THEN
+  IF p_id_caso IS NULL OR NOT EXISTS (SELECT 1 FROM casos_salud WHERE id_caso = p_id_caso) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El registro solicitado no existe en casos_salud';
   END IF;
   SELECT * FROM casos_salud WHERE id_caso = p_id_caso;
 END$$
 
-CREATE PROCEDURE sp_caso_salud_listar(IN p_limite INT)
+CREATE PROCEDURE sp_caso_salud_listar(IN p_limite BIGINT)
 BEGIN
-  DECLARE v_limite INT DEFAULT 1000;
+  DECLARE v_limite BIGINT DEFAULT 1000;
   IF p_limite IS NOT NULL AND p_limite > 0 THEN SET v_limite = p_limite; END IF;
   SELECT * FROM casos_salud ORDER BY id_caso LIMIT v_limite;
 END$$
 
 CREATE PROCEDURE sp_caso_salud_actualizar(
-  IN p_id_caso BIGINT UNSIGNED,
-  IN p_id_unidad INT UNSIGNED,
-  IN p_id_enfermedad INT UNSIGNED,
-  IN p_fecha DATE,
-  IN p_grupo_edad VARCHAR(5),
-  IN p_num_casos INT,
-  IN p_defunciones INT
+  IN p_id_caso BIGINT,
+  IN p_id_unidad BIGINT,
+  IN p_id_enfermedad BIGINT,
+  IN p_fecha VARCHAR(30),
+  IN p_grupo_edad VARCHAR(1000),
+  IN p_num_casos BIGINT,
+  IN p_defunciones BIGINT
 )
 BEGIN
+  DECLARE v_fecha DATE;
   DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Registro duplicado: ya existe un valor único igual';
   DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Referencia inválida: el registro relacionado no existe';
-  DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
-  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para una columna de tipo lista (ENUM)';
+  DECLARE EXIT HANDLER FOR 3819, 4025 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor fuera de rango: no cumple una restricción CHECK';
+  DECLARE EXIT HANDLER FOR 1265 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor no permitido: no es una opción válida de la lista o el texto es demasiado largo';
   DECLARE EXIT HANDLER FOR 1366 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor inválido para el tipo de dato de la columna';
-  IF NOT EXISTS (SELECT 1 FROM casos_salud WHERE id_caso = p_id_caso) THEN
+  DECLARE EXIT HANDLER FOR 1048 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta un dato obligatorio: un campo requerido viene vacío (NULL)';
+  DECLARE EXIT HANDLER FOR 1264 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor numérico fuera del rango permitido por el tipo de dato';
+  DECLARE EXIT HANDLER FOR 1406 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Texto demasiado largo para la columna';
+  DECLARE EXIT HANDLER FOR 1292 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  IF p_id_caso IS NULL OR NOT EXISTS (SELECT 1 FROM casos_salud WHERE id_caso = p_id_caso) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede actualizar: el registro no existe en casos_salud';
   END IF;
-  UPDATE casos_salud SET id_unidad = p_id_unidad, id_enfermedad = p_id_enfermedad, fecha = p_fecha, grupo_edad = p_grupo_edad, num_casos = p_num_casos, defunciones = p_defunciones WHERE id_caso = p_id_caso;
+  -- fecha: se valida y se quita la hora (si la trae) antes de guardar
+  SET v_fecha = IF(p_fecha IS NULL, NULL, DATE(CAST(p_fecha AS DATETIME)));
+  IF p_fecha IS NOT NULL AND v_fecha IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fecha o valor con formato inválido (use AAAA-MM-DD)';
+  END IF;
+  UPDATE casos_salud SET id_unidad = COALESCE(p_id_unidad, id_unidad), id_enfermedad = COALESCE(p_id_enfermedad, id_enfermedad), fecha = COALESCE(v_fecha, fecha), grupo_edad = COALESCE(p_grupo_edad, grupo_edad), num_casos = COALESCE(p_num_casos, num_casos), defunciones = COALESCE(p_defunciones, defunciones)
+  WHERE id_caso = p_id_caso;
 END$$
 
-CREATE PROCEDURE sp_caso_salud_eliminar(IN p_id_caso BIGINT UNSIGNED)
+CREATE PROCEDURE sp_caso_salud_eliminar(IN p_id_caso BIGINT)
 BEGIN
   DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: tiene registros relacionados en otras tablas';
-  IF NOT EXISTS (SELECT 1 FROM casos_salud WHERE id_caso = p_id_caso) THEN
+  IF p_id_caso IS NULL OR NOT EXISTS (SELECT 1 FROM casos_salud WHERE id_caso = p_id_caso) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: el registro no existe en casos_salud';
   END IF;
   DELETE FROM casos_salud WHERE id_caso = p_id_caso;
@@ -838,9 +936,6 @@ DELIMITER ;
 -- Registran INSERT, UPDATE y DELETE de las 7 entidades en la tabla auditoria
 USE clima_salud_mx;
 
-DROP TRIGGER IF EXISTS trg_estados_insert;
-DROP TRIGGER IF EXISTS trg_estados_update;
-DROP TRIGGER IF EXISTS trg_estados_delete;
 DELIMITER $$
 
 CREATE TRIGGER trg_estados_insert AFTER INSERT ON estados FOR EACH ROW
@@ -863,9 +958,6 @@ END$$
 
 DELIMITER ;
 
-DROP TRIGGER IF EXISTS trg_municipios_insert;
-DROP TRIGGER IF EXISTS trg_municipios_update;
-DROP TRIGGER IF EXISTS trg_municipios_delete;
 DELIMITER $$
 
 CREATE TRIGGER trg_municipios_insert AFTER INSERT ON municipios FOR EACH ROW
@@ -888,9 +980,6 @@ END$$
 
 DELIMITER ;
 
-DROP TRIGGER IF EXISTS trg_estaciones_meteorologicas_insert;
-DROP TRIGGER IF EXISTS trg_estaciones_meteorologicas_update;
-DROP TRIGGER IF EXISTS trg_estaciones_meteorologicas_delete;
 DELIMITER $$
 
 CREATE TRIGGER trg_estaciones_meteorologicas_insert AFTER INSERT ON estaciones_meteorologicas FOR EACH ROW
@@ -913,9 +1002,6 @@ END$$
 
 DELIMITER ;
 
-DROP TRIGGER IF EXISTS trg_registros_clima_insert;
-DROP TRIGGER IF EXISTS trg_registros_clima_update;
-DROP TRIGGER IF EXISTS trg_registros_clima_delete;
 DELIMITER $$
 
 CREATE TRIGGER trg_registros_clima_insert AFTER INSERT ON registros_clima FOR EACH ROW
@@ -938,9 +1024,6 @@ END$$
 
 DELIMITER ;
 
-DROP TRIGGER IF EXISTS trg_enfermedades_insert;
-DROP TRIGGER IF EXISTS trg_enfermedades_update;
-DROP TRIGGER IF EXISTS trg_enfermedades_delete;
 DELIMITER $$
 
 CREATE TRIGGER trg_enfermedades_insert AFTER INSERT ON enfermedades FOR EACH ROW
@@ -963,9 +1046,6 @@ END$$
 
 DELIMITER ;
 
-DROP TRIGGER IF EXISTS trg_unidades_salud_insert;
-DROP TRIGGER IF EXISTS trg_unidades_salud_update;
-DROP TRIGGER IF EXISTS trg_unidades_salud_delete;
 DELIMITER $$
 
 CREATE TRIGGER trg_unidades_salud_insert AFTER INSERT ON unidades_salud FOR EACH ROW
@@ -988,9 +1068,6 @@ END$$
 
 DELIMITER ;
 
-DROP TRIGGER IF EXISTS trg_casos_salud_insert;
-DROP TRIGGER IF EXISTS trg_casos_salud_update;
-DROP TRIGGER IF EXISTS trg_casos_salud_delete;
 DELIMITER $$
 
 CREATE TRIGGER trg_casos_salud_insert AFTER INSERT ON casos_salud FOR EACH ROW
@@ -1013,13 +1090,48 @@ END$$
 
 DELIMITER ;
 
+
+-- ---------- Validaciones extra con triggers BEFORE ----------
+-- (CURDATE() no se permite en un CHECK, por eso se valida aquí)
+DELIMITER $$
+CREATE TRIGGER trg_registros_clima_valida_ins BEFORE INSERT ON registros_clima FOR EACH ROW
+BEGIN
+  IF NEW.fecha > CURDATE() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se permiten registros de clima con fecha futura';
+  END IF;
+END$$
+CREATE TRIGGER trg_registros_clima_valida_upd BEFORE UPDATE ON registros_clima FOR EACH ROW
+BEGIN
+  IF NEW.fecha > CURDATE() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se permiten registros de clima con fecha futura';
+  END IF;
+END$$
+CREATE TRIGGER trg_casos_salud_valida_ins BEFORE INSERT ON casos_salud FOR EACH ROW
+BEGIN
+  IF NEW.fecha > CURDATE() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se permiten casos con fecha futura';
+  END IF;
+END$$
+CREATE TRIGGER trg_casos_salud_valida_upd BEFORE UPDATE ON casos_salud FOR EACH ROW
+BEGIN
+  IF NEW.fecha > CURDATE() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se permiten casos con fecha futura';
+  END IF;
+END$$
+-- La bitácora de auditoría no se puede modificar ni borrar
+CREATE TRIGGER trg_auditoria_no_update BEFORE UPDATE ON auditoria FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La auditoría es de solo lectura: no se puede modificar';
+END$$
+CREATE TRIGGER trg_auditoria_no_delete BEFORE DELETE ON auditoria FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La auditoría es de solo lectura: no se puede borrar';
+END$$
+DELIMITER ;
+
 -- ################ 05_reportes_y_procesos.sql ################
 -- Archivo 05: reportes (2 de lista + 1 dinámico) y proceso mensual
 USE clima_salud_mx;
-DROP PROCEDURE IF EXISTS sp_reporte_clima_por_estado;
-DROP PROCEDURE IF EXISTS sp_reporte_casos_por_municipio;
-DROP PROCEDURE IF EXISTS sp_reporte_dinamico;
-DROP PROCEDURE IF EXISTS sp_proceso_resumen_mensual;
 DELIMITER $$
 
 -- REPORTE 1 (lista): clima promedio por estado durante el periodo registrado
@@ -1069,6 +1181,12 @@ BEGIN
   IF p_fecha_ini IS NOT NULL AND p_fecha_fin IS NOT NULL AND p_fecha_ini > p_fecha_fin THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La fecha inicial no puede ser mayor que la final';
   END IF;
+  IF p_estado IS NOT NULL AND NOT EXISTS (SELECT 1 FROM estados WHERE nombre = p_estado) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El estado indicado no existe (revise el nombre)';
+  END IF;
+  IF p_categoria IS NOT NULL AND p_categoria NOT IN ('respiratoria','vectorial','gastrointestinal','cardiovascular','golpe_de_calor','otra') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Categoría inválida: use respiratoria, vectorial, gastrointestinal, cardiovascular, golpe_de_calor u otra';
+  END IF;
   SELECT cl.estado, cl.mes,
          cl.temp_max_prom, cl.humedad_prom_pct, cl.precipitacion_mm,
          fn_nivel_riesgo_calor(cl.temp_max_prom) AS riesgo_calor,
@@ -1095,6 +1213,8 @@ BEGIN
     JOIN municipios mu ON mu.id_municipio = u.id_municipio
     JOIN enfermedades en ON en.id_enfermedad = c.id_enfermedad
     WHERE (p_categoria IS NULL OR en.categoria = p_categoria)
+      AND (p_fecha_ini IS NULL OR c.fecha >= DATE_FORMAT(p_fecha_ini,'%Y-%m-01'))
+      AND (p_fecha_fin IS NULL OR c.fecha <= p_fecha_fin)
     GROUP BY mu.id_estado, DATE_FORMAT(c.fecha,'%Y-%m')
   ) sa ON sa.id_estado = cl.id_estado AND sa.mes = cl.mes
   ORDER BY cl.estado, cl.mes;
@@ -1122,7 +1242,7 @@ BEGIN
       FROM registros_clima r
       JOIN estaciones_meteorologicas ec ON ec.id_estacion = r.id_estacion
       JOIN municipios mu ON mu.id_municipio = ec.id_municipio
-      WHERE YEAR(r.fecha) = p_anio
+      WHERE r.fecha >= MAKEDATE(p_anio,1) AND r.fecha < MAKEDATE(p_anio+1,1)
       GROUP BY mu.id_estado, MONTH(r.fecha)
     ) cl
     LEFT JOIN (
@@ -1130,7 +1250,7 @@ BEGIN
       FROM casos_salud c
       JOIN unidades_salud u ON u.id_unidad = c.id_unidad
       JOIN municipios mu ON mu.id_municipio = u.id_municipio
-      WHERE YEAR(c.fecha) = p_anio
+      WHERE c.fecha >= MAKEDATE(p_anio,1) AND c.fecha < MAKEDATE(p_anio+1,1)
       GROUP BY mu.id_estado, MONTH(c.fecha)
     ) sa ON sa.id_estado = cl.id_estado AND sa.mes = cl.mes;
   COMMIT;
@@ -1139,86 +1259,117 @@ END$$
 DELIMITER ;
 
 -- ################ 06_roles_y_permisos.sql ################
--- Archivo 06: roles y permisos (MySQL 8)
+-- Archivo 06: roles y permisos (MySQL 8 / MariaDB)
 -- administrador: todo | analista: solo lectura + reportes | usuario: captura (sin eliminar)
 USE clima_salud_mx;
-CREATE ROLE IF NOT EXISTS 'rol_administrador', 'rol_analista', 'rol_usuario';
+-- Todo va dentro de un procedimiento: si el usuario conectado NO tiene permiso
+-- para administrar usuarios/roles (no es root), NO se marca error; solo se
+-- muestra un aviso y la base de datos sigue funcionando completa.
+DELIMITER $$
+CREATE PROCEDURE tmp_configurar_seguridad()
+BEGIN
+  DECLARE v_maria BOOLEAN DEFAULT VERSION() LIKE '%MariaDB%';
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION
+  BEGIN
+    GET DIAGNOSTICS CONDITION 1 @msg_error = MESSAGE_TEXT;
+    SELECT 'AVISO: no se pudieron configurar usuarios/roles. Todo lo demás (tablas, datos, funciones, procedimientos, triggers y reportes) SÍ quedó creado y funciona. Revisa la columna detalle; normalmente se arregla conectándote como root.' AS aviso,
+           @msg_error AS detalle;
+  END;
 
--- ---- Administrador ----
-GRANT ALL PRIVILEGES ON clima_salud_mx.* TO 'rol_administrador';
+  -- No se borra nada: se crean solo si no existen (así nunca falla al re-ejecutar)
+  CREATE ROLE IF NOT EXISTS rol_administrador;
+  CREATE ROLE IF NOT EXISTS rol_analista;
+  CREATE ROLE IF NOT EXISTS rol_usuario;
 
--- ---- Analista: SELECT en tablas (sin auditoría), reportes, lectura y funciones ----
-GRANT SELECT ON clima_salud_mx.estados TO 'rol_analista';
-GRANT SELECT ON clima_salud_mx.municipios TO 'rol_analista';
-GRANT SELECT ON clima_salud_mx.estaciones_meteorologicas TO 'rol_analista';
-GRANT SELECT ON clima_salud_mx.registros_clima TO 'rol_analista';
-GRANT SELECT ON clima_salud_mx.enfermedades TO 'rol_analista';
-GRANT SELECT ON clima_salud_mx.unidades_salud TO 'rol_analista';
-GRANT SELECT ON clima_salud_mx.casos_salud TO 'rol_analista';
-GRANT SELECT ON clima_salud_mx.resumen_mensual TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_leer TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_listar TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_leer TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_listar TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_leer TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_listar TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_leer TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_listar TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_leer TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_listar TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_leer TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_listar TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_leer TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_listar TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_clima_por_estado TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_casos_por_municipio TO 'rol_analista';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_dinamico TO 'rol_analista';
-GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_temp_promedio TO 'rol_analista';
-GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_nivel_riesgo_calor TO 'rol_analista';
-GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_tasa_letalidad TO 'rol_analista';
-GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_tasa_100k TO 'rol_analista';
+    -- ---- Administrador ----
+    GRANT ALL PRIVILEGES ON clima_salud_mx.* TO rol_administrador;
 
--- ---- Usuario: crear, leer, listar y actualizar mediante procedimientos; reportes; NO eliminar ----
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_crear TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_leer TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_listar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_actualizar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_crear TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_leer TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_listar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_actualizar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_crear TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_leer TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_listar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_actualizar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_crear TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_leer TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_listar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_actualizar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_crear TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_leer TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_listar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_actualizar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_crear TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_leer TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_listar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_actualizar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_crear TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_leer TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_listar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_actualizar TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_clima_por_estado TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_casos_por_municipio TO 'rol_usuario';
-GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_dinamico TO 'rol_usuario';
+    -- ---- Analista: SELECT en tablas (sin auditoría), reportes, lectura y funciones ----
+    GRANT SELECT ON clima_salud_mx.estados TO rol_analista;
+    GRANT SELECT ON clima_salud_mx.municipios TO rol_analista;
+    GRANT SELECT ON clima_salud_mx.estaciones_meteorologicas TO rol_analista;
+    GRANT SELECT ON clima_salud_mx.registros_clima TO rol_analista;
+    GRANT SELECT ON clima_salud_mx.enfermedades TO rol_analista;
+    GRANT SELECT ON clima_salud_mx.unidades_salud TO rol_analista;
+    GRANT SELECT ON clima_salud_mx.casos_salud TO rol_analista;
+    GRANT SELECT ON clima_salud_mx.resumen_mensual TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_leer TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_listar TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_leer TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_listar TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_leer TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_listar TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_leer TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_listar TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_leer TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_listar TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_leer TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_listar TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_leer TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_listar TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_clima_por_estado TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_casos_por_municipio TO rol_analista;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_dinamico TO rol_analista;
+    GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_temp_promedio TO rol_analista;
+    GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_nivel_riesgo_calor TO rol_analista;
+    GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_tasa_letalidad TO rol_analista;
+    GRANT EXECUTE ON FUNCTION clima_salud_mx.fn_tasa_100k TO rol_analista;
 
--- ---- Cuentas de ejemplo (cambiar contraseñas en un entorno real) ----
-CREATE USER IF NOT EXISTS 'admin_clima'@'localhost'    IDENTIFIED BY 'Admin#Clima2026';
-CREATE USER IF NOT EXISTS 'analista_clima'@'localhost' IDENTIFIED BY 'Analista#Clima2026';
-CREATE USER IF NOT EXISTS 'usuario_clima'@'localhost'  IDENTIFIED BY 'Usuario#Clima2026';
-GRANT 'rol_administrador' TO 'admin_clima'@'localhost';
-GRANT 'rol_analista'      TO 'analista_clima'@'localhost';
-GRANT 'rol_usuario'       TO 'usuario_clima'@'localhost';
-SET DEFAULT ROLE 'rol_administrador' TO 'admin_clima'@'localhost';
-SET DEFAULT ROLE 'rol_analista'      TO 'analista_clima'@'localhost';
-SET DEFAULT ROLE 'rol_usuario'       TO 'usuario_clima'@'localhost';
-FLUSH PRIVILEGES;
+    -- ---- Usuario: crear, leer, listar y actualizar mediante procedimientos; reportes; NO eliminar ----
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_crear TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_leer TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_listar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estado_actualizar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_crear TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_leer TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_listar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_municipio_actualizar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_crear TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_leer TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_listar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_estacion_actualizar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_crear TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_leer TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_listar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_registro_clima_actualizar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_crear TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_leer TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_listar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_enfermedad_actualizar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_crear TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_leer TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_listar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_unidad_salud_actualizar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_crear TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_leer TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_listar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_caso_salud_actualizar TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_clima_por_estado TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_casos_por_municipio TO rol_usuario;
+    GRANT EXECUTE ON PROCEDURE clima_salud_mx.sp_reporte_dinamico TO rol_usuario;
+
+  -- ---- Cuentas de ejemplo (cambiar contraseñas en un entorno real) ----
+  CREATE USER IF NOT EXISTS 'admin_clima'@'localhost'    IDENTIFIED BY 'Admin#Clima2026';
+  CREATE USER IF NOT EXISTS 'analista_clima'@'localhost' IDENTIFIED BY 'Analista#Clima2026';
+  CREATE USER IF NOT EXISTS 'usuario_clima'@'localhost'  IDENTIFIED BY 'Usuario#Clima2026';
+  -- Si ya existían, se les deja la contraseña de este script
+  ALTER USER 'admin_clima'@'localhost'    IDENTIFIED BY 'Admin#Clima2026';
+  ALTER USER 'analista_clima'@'localhost' IDENTIFIED BY 'Analista#Clima2026';
+  ALTER USER 'usuario_clima'@'localhost'  IDENTIFIED BY 'Usuario#Clima2026';
+  GRANT rol_administrador TO 'admin_clima'@'localhost';
+  GRANT rol_analista      TO 'analista_clima'@'localhost';
+  GRANT rol_usuario       TO 'usuario_clima'@'localhost';
+
+  -- Rol por defecto (MySQL y MariaDB usan sintaxis distinta)
+  SET @s1 = IF(v_maria, "SET DEFAULT ROLE rol_administrador FOR 'admin_clima'@'localhost'", "SET DEFAULT ROLE rol_administrador TO 'admin_clima'@'localhost'");
+  SET @s2 = IF(v_maria, "SET DEFAULT ROLE rol_analista FOR 'analista_clima'@'localhost'",   "SET DEFAULT ROLE rol_analista TO 'analista_clima'@'localhost'");
+  SET @s3 = IF(v_maria, "SET DEFAULT ROLE rol_usuario FOR 'usuario_clima'@'localhost'",     "SET DEFAULT ROLE rol_usuario TO 'usuario_clima'@'localhost'");
+  PREPARE st FROM @s1; EXECUTE st; DEALLOCATE PREPARE st;
+  PREPARE st FROM @s2; EXECUTE st; DEALLOCATE PREPARE st;
+  PREPARE st FROM @s3; EXECUTE st; DEALLOCATE PREPARE st;
+
+  SELECT 'OK: usuarios y roles creados (admin_clima, analista_clima, usuario_clima)' AS resultado;
+END$$
+DELIMITER ;
+CALL tmp_configurar_seguridad();
+DROP PROCEDURE IF EXISTS tmp_configurar_seguridad;

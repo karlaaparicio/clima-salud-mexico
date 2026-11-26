@@ -120,15 +120,36 @@ El sistema contempla consultas y procesos para obtener información estadística
 - Casos por grupo de edad.
 - Totales generales de casos y defunciones.
 
-**Procedimiento almacenado:**
+**Funciones almacenadas:**
 
-Se contempla el procedimiento `consultar_enfermedad`, para consultar información de una enfermedad específica.
+| Función | Descripción |
+|---|---|
+| `fn_temp_promedio(max, min)` | Temperatura promedio del día |
+| `fn_nivel_riesgo_calor(temp_max)` | Nivel de riesgo por calor: bajo, moderado, alto o extremo |
+| `fn_tasa_letalidad(casos, defunciones)` | Porcentaje de defunciones sobre casos |
+| `fn_tasa_100k(casos, poblacion)` | Casos por cada 100,000 habitantes |
 
-Ejemplo de ejecución:
+**Procedimientos almacenados:**
+
+- **CRUD** para las 7 entidades (`estado`, `municipio`, `estacion`, `registro_clima`, `enfermedad`, `unidad_salud`, `caso_salud`): `sp_<entidad>_crear`, `_leer`, `_listar`, `_actualizar` y `_eliminar`. En `_actualizar`, un parámetro en `NULL` conserva el valor actual.
+- **Reportes:** `sp_reporte_clima_por_estado()`, `sp_reporte_casos_por_municipio()` y `sp_reporte_dinamico(estado, categoria, fecha_inicio, fecha_fin)`, donde `NULL` significa "todos".
+- **Proceso:** `sp_proceso_resumen_mensual(anio)` recalcula la tabla `resumen_mensual` dentro de una transacción.
+
+Ejemplos de ejecución:
 
 ```sql
-CALL consultar_enfermedad('Dengue');
+CALL sp_reporte_dinamico('Sonora', 'golpe_de_calor', NULL, NULL);
+CALL sp_municipio_crear(2, 'Ensenada', 443807, @id);
+SELECT fn_nivel_riesgo_calor(42.5);
 ```
+
+El archivo `pruebas_clima_salud.sql` ejecuta todas las funciones y procedimientos.
+
+**Triggers y seguridad:**
+
+- Triggers de auditoría (`INSERT`, `UPDATE`, `DELETE`) en las 7 entidades. La tabla `auditoria` es de solo lectura.
+- Triggers de validación que impiden registrar fechas futuras.
+- Roles: `rol_administrador` (todo), `rol_analista` (solo lectura y reportes) y `rol_usuario` (captura sin eliminar).
 
 **Procesos del sistema:**
 - Conexión con MySQL y MongoDB.
@@ -168,15 +189,17 @@ Se consideran los siguientes criterios:
 
 | Indicador | Resultado |
 |---|---:|
-| Registros consultados en MySQL | 4,238 |
-| Documentos preparados | 1,118 |
-| Documentos almacenados en MongoDB | 1,118 |
-| Casos en MySQL | 29,708 |
-| Casos en MongoDB | 29,708 |
-| Defunciones | 3 |
+| Registros consultados en MySQL | 4,300 |
+| Documentos preparados | 1,183 |
+| Documentos almacenados en MongoDB | 1,183 |
+| Casos en MySQL | 37,231 |
+| Casos en MongoDB | 37,231 |
+| Defunciones (MySQL y MongoDB) | 249 |
 | Diferencia de casos | 0 |
 
-*Los resultados deben corresponder con la ejecución y validación real del proceso de migración.*
+*Resultados con `climasalud.sql` recién cargado. La migración compara los totales de MySQL y MongoDB al terminar, y si no coinciden se detiene con error. También elimina de MongoDB los documentos que ya no existen en MySQL.*
+
+**Nota sobre los datos:** las tablas de MySQL se llenan con datos sintéticos de 2025, generados por `climasalud.sql` con patrones realistas de temperatura y lluvia por ciudad. Los datos reales descargados (Open-Meteo y datos abiertos de dengue 2023) se encuentran procesados en `data/processed/`.
 
 # 5. PRESENTACIÓN DEL SISTEMA (UI) Y CIERRE
 
@@ -228,7 +251,7 @@ Crear un archivo `.env` en la carpeta principal del proyecto:
 
 ```ini
 MYSQL_HOST=localhost
-MYSQL_USER=tu_usuario
+MYSQL_USER=analista_clima
 MYSQL_PASSWORD=tu_contraseña
 MYSQL_DATABASE=clima_salud_mx
 
@@ -236,7 +259,11 @@ MONGO_URI=mongodb://localhost:27017/
 MONGO_DATABASE=clima_salud_mx
 ```
 
-Sustituir los valores de ejemplo por las credenciales correspondientes.
+Sustituir los valores de ejemplo por las credenciales correspondientes. Para el dashboard y la migración basta con `analista_clima`, que solo tiene permisos de lectura y lo crea `climasalud.sql`. `dashboard.py`, `probar_conexiones.py` y `Migracion_clima_salud.py` toman las credenciales de este archivo.
+
+### Crear la base de datos MySQL
+
+Abrir `climasalud.sql` en MySQL Workbench, conectado como `root`, y ejecutarlo completo. El script borra y vuelve a crear la base `clima_salud_mx`, y se puede ejecutar varias veces. Después, `pruebas_clima_salud.sql` verifica que todas las funciones y procedimientos funcionen.
 
 ### 3. Ejecutar el sistema
 
@@ -293,7 +320,8 @@ http://localhost:8501
 | `dashboard.py` | Interfaz de consulta y visualización |
 | `Migracion_clima_salud.py` | Proceso ETL |
 | `probar_conexiones.py` | Verificación de conexiones |
-| `climasalud.sql` | Estructura y datos de MySQL |
+| `climasalud.sql` | Estructura, datos, funciones, procedimientos, triggers y roles de MySQL |
+| `pruebas_clima_salud.sql` | Ejecución de prueba de todas las funciones y procedimientos |
 | `.env` | Variables de configuración local |
 | `.gitignore` | Exclusión de archivos privados |
 | `README.md` | Documentación del proyecto |

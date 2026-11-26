@@ -1,1 +1,17 @@
 data/raw/salud/*.zip
+
+# Credenciales locales (nunca subir)
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editores / sistema
+.idea/
+.vscode/
+.DS_Store
+.streamlit/secrets.toml

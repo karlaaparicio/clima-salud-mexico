@@ -1,22 +1,34 @@
 
-import pymysql
-from pymongo import MongoClient, ReplaceOne
+import os
+import sys
+from pathlib import Path
 from datetime import datetime, timezone
 
+import pymysql
+from pymongo import MongoClient, ReplaceOne
+from dotenv import load_dotenv
+
 # ==========================================
-# 1. CONEXIONES
+# 1. CONEXIONES (credenciales en el archivo .env, igual que dashboard.py)
 # ==========================================
 
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+
 conexion_mysql = pymysql.connect(
-    host="localhost",
-    user="clima_usuario",
-    password="ClimaProyecto2026!",
-    database="clima_salud_mx",
+    host=os.getenv("MYSQL_HOST"),
+    user=os.getenv("MYSQL_USER"),
+    password=os.getenv("MYSQL_PASSWORD"),
+    database=os.getenv("MYSQL_DATABASE"),
     cursorclass=pymysql.cursors.DictCursor
 )
 
-cliente_mongo = MongoClient("mongodb://localhost:27017/")
-db = cliente_mongo["clima_salud_mx"]
+cliente_mongo = MongoClient(
+    os.getenv("MONGO_URI"),
+    serverSelectionTimeoutMS=5000
+)
+db = cliente_mongo[os.getenv("MONGO_DATABASE")]
+
+exito = False
 
 try:
     cliente_mongo.admin.command("ping")
@@ -227,26 +239,52 @@ try:
         print("Documentos insertados:", resultado.upserted_count)
         print("Documentos modificados:", resultado.modified_count)
 
+    # Borrar documentos que ya no existen en MySQL (por ejemplo, si los
+    # datos cambiaron). Sin esto, MongoDB conserva documentos viejos y los
+    # totales dejan de coincidir.
+    ids_actuales = [d["_id"] for d in documentos]
+    obsoletos = coleccion.delete_many({"_id": {"$nin": ids_actuales}})
+    print("Documentos obsoletos eliminados:", obsoletos.deleted_count)
+
     # ==========================================
-    # 7. VALIDAR RESULTADOS
+    # 7. VALIDAR RESULTADOS (MySQL vs MongoDB)
     # ==========================================
 
-    print(
-        "Documentos en MongoDB:",
-        coleccion.count_documents({})
-    )
+    with conexion_mysql.cursor() as cursor:
+        cursor.execute("""
+            SELECT COUNT(*) AS registros,
+                   COALESCE(SUM(num_casos), 0) AS casos,
+                   COALESCE(SUM(defunciones), 0) AS defunciones
+            FROM casos_salud
+        """)
+        mysql_tot = cursor.fetchone()
 
-    print(
-        "Total de casos migrados:",
-        sum(d["total_casos"] for d in documentos)
-    )
+    mongo_tot = list(coleccion.aggregate([
+        {
+            "$group": {
+                "_id": None,
+                "documentos": {"$sum": 1},
+                "casos": {"$sum": "$total_casos"},
+                "defunciones": {"$sum": "$total_defunciones"}
+            }
+        }
+    ]))
+    mongo_tot = mongo_tot[0] if mongo_tot else {"documentos": 0, "casos": 0, "defunciones": 0}
 
-    print(
-        "Total de defunciones:",
-        sum(d["total_defunciones"] for d in documentos)
-    )
+    print("Registros en MySQL:", mysql_tot["registros"])
+    print("Documentos en MongoDB:", mongo_tot["documentos"])
+    print("Casos        MySQL:", int(mysql_tot["casos"]), "| MongoDB:", mongo_tot["casos"])
+    print("Defunciones  MySQL:", int(mysql_tot["defunciones"]), "| MongoDB:", mongo_tot["defunciones"])
+
+    if mongo_tot["documentos"] != len(documentos):
+        raise ValueError("La cantidad de documentos en MongoDB no coincide con los preparados")
+
+    if (int(mysql_tot["casos"]) != mongo_tot["casos"]
+            or int(mysql_tot["defunciones"]) != mongo_tot["defunciones"]):
+        raise ValueError("Los totales de MySQL y MongoDB no coinciden")
 
     print("MIGRACIÓN FINALIZADA CORRECTAMENTE")
+    exito = True
 
 except Exception as error:
     print("ERROR EN LA MIGRACIÓN:", error)
@@ -255,3 +293,5 @@ finally:
     conexion_mysql.close()
     cliente_mongo.close()
     print("Conexiones cerradas")
+
+sys.exit(0 if exito else 1)
